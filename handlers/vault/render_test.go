@@ -191,7 +191,7 @@ func cellBadges(t *testing.T, out string) map[string][][]string {
 	rows := map[string][][]string{}
 	for _, tr := range regexp.MustCompile(`(?s)<tr [^>]*>.*?</tr>`).FindAllString(out, -1) {
 		cells := regexp.MustCompile(`(?s)<td[^>]*>.*?</td>`).FindAllString(tr, -1)
-		if len(cells) != 4 {
+		if len(cells) != 5 {
 			continue
 		}
 		name := strings.TrimSpace(regexp.MustCompile(`(?s)<a [^>]*>(.*?)</a>`).FindStringSubmatch(cells[1])[1])
@@ -308,6 +308,34 @@ const (
 	expiringHash = "c9e15763f722f23e98a29decdfae341b98d53056"
 	secondHash   = "5d0c1a9e3b7f2e4a6c8d0f1b3a5c7e9f2b4d6a8c"
 )
+
+// Each pledge can be taken back from the list: a form posting its resource to
+// /vault/remove -- the handler the resource page's button uses -- with a
+// confirmation, except while the pledge is frozen, which the server refuses:
+// that row has a disabled button saying why, and no form.
+func TestVaultRowsCanRemoveAPledgeUnlessFrozen(t *testing.T) {
+	tpl := parseVault(t)
+	var page bytes.Buffer
+	if err := tpl.ExecuteTemplate(&page, "main", vaultView{Lang: "en", CSRF: "csrf", Data: fixturePledges()}); err != nil {
+		t.Fatal(err)
+	}
+	out := page.String()
+	forms := regexp.MustCompile(`(?s)<form[^>]*action="[^"]*/vault/remove"[^>]*>.*?name="resource_id" value="([0-9a-f]+)".*?</form>`).FindAllStringSubmatch(out, -1)
+	var got []string
+	for _, f := range forms {
+		got = append(got, f[1])
+	}
+	want := []string{vaultedHash, expiringHash, secondHash}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("remove forms for %v, want %v (not the frozen %s)", got, want, loadingHash)
+	}
+	if n := strings.Count(out, "return confirm("); n != len(want) {
+		t.Errorf("%d confirmations, want %d", n, len(want))
+	}
+	if n := strings.Count(out, `class="btn btn-ghost btn-xs btn-square text-w-muted opacity-40 cursor-not-allowed" disabled`); n != 1 {
+		t.Errorf("%d disabled buttons, want 1 for the frozen pledge", n)
+	}
+}
 
 const vaultFixtureRegen = `UPDATE_FIXTURES=1 go test ` +
 	`-ldflags '-X google.golang.org/protobuf/reflect/protoregistry.conflictPolicy=ignore' ` +
