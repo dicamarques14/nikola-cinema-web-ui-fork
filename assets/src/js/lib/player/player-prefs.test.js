@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { loadPrefs, savePrefs, stepRate, rateLabel, RATES, DEFAULTS, loadSubtitleDelay, saveSubtitleDelay } from './player-prefs.js';
+import { loadPrefs, savePrefs, stepRate, rateLabel, RATES, DEFAULTS, loadSubtitleDelay, saveSubtitleDelay, normalizeDelay } from './player-prefs.js';
 
 function mem(initial) {
     const m = new Map(Object.entries(initial || {}));
@@ -59,4 +59,13 @@ test('the subtitle delay is remembered per file, zero is forgotten, and the map 
     assert.equal(kept.includes('f59'), true);
     assert.equal(loadSubtitleDelay('x', null), 0);
     assert.equal(loadSubtitleDelay('res:a.mkv', mem({ 'wt-sub-delay': '"junk"' })), 0);
+});
+
+test('normalizeDelay: quarter-second steps, a sane range, nothing that is not a number', () => {
+    assert.equal(normalizeDelay(0.3), 0.25);
+    assert.equal(normalizeDelay(-0.4), -0.5);
+    assert.equal(normalizeDelay(1e9), 60);
+    assert.equal(normalizeDelay(-1e9), -60);
+    assert.equal(normalizeDelay('2'), 0);
+    assert.equal(normalizeDelay(NaN), 0);
 });

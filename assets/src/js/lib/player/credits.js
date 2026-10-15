@@ -83,29 +83,9 @@ export function creditsFromElement(el, duration) {
 
 // --- Where the timings come from -------------------------------------------
 
-// cuesOfLoadedTracks: film-time cues of element-backed <track>s that already
-// have them. cue-offset.js stashes the authored times on first touch; a cue it
-// has not touched is still in authored time.
-export function cuesOfLoadedTracks(video) {
-    const out = [];
-    if (!video || typeof video.querySelectorAll !== 'function') return out;
-    for (const el of video.querySelectorAll('track')) {
-        const cues = el.track && el.track.cues;
-        if (!cues || !cues.length) continue;
-        const list = [];
-        for (const c of cues) {
-            const start = c.__absStart !== undefined ? c.__absStart : c.startTime;
-            const end = c.__absEnd !== undefined ? c.__absEnd : c.endTime;
-            list.push({ start, end });
-        }
-        if (list.length > out.length) out.splice(0, out.length, ...list); // the fullest track
-    }
-    return out;
-}
-
 // timingSourceURL: a whole-file subtitle track to read timings from when none
-// is loaded -- the viewer has subtitles off, or is on a track muxed into the
-// film (hls.js feeds those segment by segment; their last line is not known
+// is held -- the viewer has subtitles off, or is on a track muxed into the
+// film (read by the player as the film plays; their last line is not known
 // until the end). Any language: timings do not depend on it. Not a
 // translation: asking for one starts a job that costs money.
 export function timingSourceURL(modal) {

@@ -880,23 +880,6 @@ test('hlsJsSupported agrees with the installed Hls.isSupported()', (t) => {
     }
 });
 
-test('the Firefox-on-Windows rule is the one the installed hls.js applies', () => {
-    const dist = readFileSync(createRequire(import.meta.url).resolve('hls.js/dist/hls.mjs'), 'utf8');
-    assert.ok(dist.includes(`${HEVC_ANSWER_INACCURATE.source}/i.test(navigator.userAgent)`),
-        'hls.js changed its rule for HEVC answers it does not trust; follow it here');
-    assert.equal(HEVC_ANSWER_INACCURATE.test(UA.firefoxWin), true);
-    assert.equal(HEVC_ANSWER_INACCURATE.test(UA.firefoxMac), false);
-    assert.equal(HEVC_ANSWER_INACCURATE.test(UA.chromeWin), false);
-});
-
-test('isIOSLike is hls-manager.js\'s own iOS rule', () => {
-    const src = readFileSync(path.join(HERE, 'hls-manager.js'), 'utf8');
-    assert.ok(src.includes('/iPad|iPhone|iPod/.test(navigator.userAgent) ||\n    (navigator.platform === \'MacIntel\' && navigator.maxTouchPoints > 1)'),
-        'the player changed when it plays HLS natively; change isIOSLike with it');
-    assert.ok(src.includes('if (!Hls || !Hls.isSupported() || (isIOS && !iosPlaysHlsJs(window))) {'),
-        'the player changed how it picks hls.js over native HLS; change decodePath with it');
-});
-
 // ---- playback-quality ------------------------------------------------------
 
 class PlayingVideo extends EventTarget {
@@ -1286,33 +1269,6 @@ test('the event carries one boolean per audio token and the audio in `decode`', 
     assert.equal(got.hevc8, false, 'the HEVC ones as before');
     assert.equal(got.decode, 'aac51,ec3');
     assert.equal(got.decode_path, 'mse');
-});
-
-// ---- pinned to the installed hls.js: what it asks about audio --------------
-
-test('hls.js asks about an audio codec in this spelling, of the MediaSource it prefers', () => {
-    const dist = readFileSync(createRequire(import.meta.url).resolve('hls.js/dist/hls.mjs'), 'utf8');
-    assert.ok(dist.includes('function mimeTypeForCodec(codec, type) {\n  return `${type}/mp4;codecs=${codec}`;\n}'),
-        'hls.js changed how it spells a codec for isTypeSupported; change audioMseType with it');
-    assert.equal(audioMseType('ac-3'), 'audio/mp4;codecs=ac-3');
-    assert.ok(dist.includes("isAudioSupported(codec) {\n    return areCodecsMediaSourceSupported(codec, 'audio', this.hls.config.preferManagedMediaSource);"),
-        'hls.js changed which MediaSource it asks about audio codecs; change dolbyDecodeTokens with it');
-    // Its own AAC 5.1 question (a rendition with CHANNELS over 2): the same
-    // media-source audio configuration, a channel count as a string.
-    assert.ok(dist.includes("contentType: mimeTypeForCodec(audioCodec, 'audio'),"));
-    assert.ok(dist.includes("audioConfiguration.channels = '' + channelsNumber;"));
-});
-
-test('hls.js distrusts the HEVC answers of Firefox on Windows, and no audio answer', () => {
-    const dist = readFileSync(createRequire(import.meta.url).resolve('hls.js/dist/hls.mjs'), 'utf8');
-    const uses = dist.split('userAgentHevcSupportIsInaccurate()').length - 1;
-    assert.equal(uses, 2, 'hls.js distrusts a browser\'s answer in a new place: if it is an audio one, follow it here');
-    assert.ok(dist.includes('const lowerPriority = limitedHevcSupport && isHEVC(fourCC);'));
-    assert.ok(dist.includes("videoCodecs.split(',').some(videoCodec => isHEVC(videoCodec)) && userAgentHevcSupportIsInaccurate()"));
-    // E-AC-3 cannot come in MPEG-TS at all: the transcoder copies it only
-    // into fMP4 (a passthrough session), so ec3 is safe to declare on any
-    // route.
-    assert.ok(dist.includes("new Error('Unsupported EC-3 in M2TS found')"));
 });
 
 test('an iPhone on hls.js (the default; ?mms=off opts out) asks its ManagedMediaSource, PQ as media-source; without one it stays native', async () => {

@@ -7,7 +7,6 @@ import { JSDOM } from 'jsdom';
 const boot = new JSDOM('<!doctype html><body></body>', { url: 'https://webtor.io/' });
 global.window = boot.window; global.document = boot.window.document;
 const { nextStartForm, nextURL, createNextItemGo, syncPage, canMoveOn, takeFallbackNote, PREPARED_MAX_AGE_MS, NEXT_RENDER_TIMEOUT_MS } = await import('./next-item-go.js');
-const { markNextStart } = await import('./stream-restart.js');
 
 function page() {
     const dom = new JSDOM(`<!doctype html><body>
@@ -33,33 +32,24 @@ test('the start form of the next file: same form, next item, the carried choice'
     assert.equal(nextStartForm(null, {}, w.document), null);
 });
 
-// The card up over this file's player marks its start form (stream-restart.js
-// markNextStart: purge, and force-slow for a "watch as is" run), and a move to
-// the next file from under the card (N, the next card's button) cloned the
-// marks into that file's start: a purge past its job cache, and a force-slow
-// that skipped its own slow-download question (review of iteration 3, F1).
-test('the next file\'s start carries none of the stream restart\'s fields: they are this file\'s', () => {
+// The deep link's purge and force-slow fields (app/resource/get.js, marked
+// data-stream-restart as a literal there) are this file's: a move to the next
+// file cloned them into that file's start -- a purge past its job cache, and a
+// force-slow that skipped its own slow-download question.
+test('the next file\'s start carries none of the deep link\'s fields: they are this file\'s', () => {
     const w = page();
-    const v = w.document.createElement('video');
-    Object.assign(v.dataset, { resourceId: 'res', itemId: 'i1', path: 'S01/e01.mkv', offerAnswered: 'continue-slow' });
-    w.document.getElementById('log-i1').appendChild(v);
-    const cur = markNextStart({ win: w, doc: w.document, video: v });
+    const f = w.document.querySelector('form');
+    for (const [name, value] of [['purge', 'true'], ['force-slow', 'true']]) {
+        const input = w.document.createElement('input');
+        for (const [k, val] of [['type', 'hidden'], ['name', name], ['value', value], ['data-stream-restart', '']]) input.setAttribute(k, val);
+        f.appendChild(input);
+    }
     const marked = { 'resource-id': 'res', 'item-id': 'i1', purge: 'true', 'force-slow': 'true' };
-    assert.deepEqual(Object.fromEntries(new w.FormData(cur).entries()), marked, 'fixture: the card marked this file\'s form');
-    const form = nextStartForm({ itemId: 'i2', path: 'S01/e02.mkv' }, { 'carry-sub': 'off' }, w.document);
-    assert.deepEqual(Object.fromEntries(new w.FormData(form).entries()), { 'resource-id': 'res', 'item-id': 'i2', 'carry-sub': 'off' });
-    assert.deepEqual(Object.fromEntries(new w.FormData(cur).entries()), marked,
+    assert.deepEqual(Object.fromEntries(new w.FormData(f).entries()), marked, 'fixture: this file\'s form is marked');
+    const next = nextStartForm({ itemId: 'i2', path: 'S01/e02.mkv' }, { 'carry-sub': 'off' }, w.document);
+    assert.deepEqual(Object.fromEntries(new w.FormData(next).entries()), { 'resource-id': 'res', 'item-id': 'i2', 'carry-sub': 'off' });
+    assert.deepEqual(Object.fromEntries(new w.FormData(f).entries()), marked,
         'this file\'s form keeps them: its own next press still goes past the job cache');
-
-    // The deep link's fields are marked the same way (app/resource/get.js,
-    // the attribute as a literal there).
-    const w2 = page();
-    const f2 = w2.document.querySelector('form');
-    const deep = w2.document.createElement('input');
-    for (const [k, val] of [['type', 'hidden'], ['name', 'purge'], ['value', 'true'], ['data-stream-restart', '']]) deep.setAttribute(k, val);
-    f2.appendChild(deep);
-    const next2 = nextStartForm({ itemId: 'i2', path: 'S01/e02.mkv' }, {}, w2.document);
-    assert.deepEqual(Object.fromEntries(new w2.FormData(next2).entries()), { 'resource-id': 'res', 'item-id': 'i2' });
 });
 
 test('an audio page has an audio form', () => {

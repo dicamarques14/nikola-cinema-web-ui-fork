@@ -15,7 +15,6 @@ import { replacePlayerOnStage } from './player-stage.js';
 import { backgroundToken, fetchStreamRender } from './background-render.js';
 import { readCarry } from './next-item.js';
 import { persistTrackChoice } from './track-dialog.js';
-import { PURGE_MARK } from './stream-restart.js';
 import { destroyViews, activateViews } from '../loadAsyncView';
 
 // A prepared render older than this is not used: its transcoder session and
@@ -41,16 +40,13 @@ export function nextStartForm(next, carry, root = document) {
     const cur = root.querySelector(START_FORM);
     if (!cur || !next) return null;
     const form = cur.cloneNode(true);
-    // The fields a stream restart put on THIS file's form (stream-restart.js
-    // markNextStart, restartStream; the deep link, app/resource/get.js:
-    // purge, force-slow -- marked PURGE_MARK) are this file's: its session
-    // is dead, its viewer answered its slow-download question. They sit on
-    // the form while the card is up over this player, and a move to the
-    // next file from under it (N, the next card's button) cloned them into
-    // that file's start: a purge past its job cache, and a force-slow that
-    // skipped its own slow-download question (review of iteration 3, F1).
-    // The next file's start is an ordinary one.
-    for (const el of form.querySelectorAll(`input[${PURGE_MARK}]`)) el.remove();
+    // The fields a deep link put on THIS file's form (app/resource/get.js:
+    // purge, force-slow -- marked data-stream-restart) are this file's: its
+    // viewer answered its slow-download question. A move to the next file
+    // cloned them into that file's start: a purge past its job cache, and a
+    // force-slow that skipped its own slow-download question. The next
+    // file's start is an ordinary one.
+    for (const el of form.querySelectorAll('input[data-stream-restart]')) el.remove();
     const item = form.querySelector('input[name="item-id"]');
     if (!item) return null;
     item.value = next.itemId;

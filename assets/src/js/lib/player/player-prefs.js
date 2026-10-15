@@ -88,3 +88,14 @@ export function saveSubtitleDelay(fileKey, delay, storage = safeStorage()) {
     for (const k of keys.slice(0, Math.max(0, keys.length - DELAY_CAP))) delete map[k];
     try { storage.setItem(DELAY_KEY, JSON.stringify(map)); return true; } catch (e) { return false; }
 }
+
+// The subtitle delay's bounds and step, in seconds (positive = later). The
+// dialog's row and the G/H keys move it in steps; movi-player holds the value.
+export const MAX_SUBTITLE_DELAY = 60;
+export const SUBTITLE_DELAY_STEP = 0.25;
+
+export function normalizeDelay(d) {
+    if (typeof d !== 'number' || !isFinite(d)) return 0;
+    const stepped = Math.round(d / SUBTITLE_DELAY_STEP) * SUBTITLE_DELAY_STEP;
+    return Math.max(-MAX_SUBTITLE_DELAY, Math.min(MAX_SUBTITLE_DELAY, stepped));
+}

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { creditsStart, parseVttTimings, cuesOfLoadedTracks, timingSourceURL, creditsFromElement } from './credits.js';
+import { creditsStart, parseVttTimings, timingSourceURL, creditsFromElement } from './credits.js';
 
 // A 45-minute episode with a line every ~10 s up to `until`.
 function transcript(until, from = 5) {
@@ -59,22 +59,10 @@ test('timing lines of VTT and SRT, and nothing else', () => {
     assert.deepEqual(parseVttTimings(undefined), []);
 });
 
-test('loaded cues are read in film time, from the fullest track', () => {
-    const track = (cues) => ({ track: { cues } });
-    const video = { querySelectorAll: () => [
-        track([{ startTime: 1, endTime: 2 }]),
-        // Shifted onto a session timeline by cue-offset.js: the authored times are stashed.
-        track([{ startTime: 0, endTime: 3, __absStart: 1800, __absEnd: 1803 }, { startTime: 10, endTime: 12, __absStart: 1810, __absEnd: 1812 }]),
-        track(null),
-    ] };
-    assert.deepEqual(cuesOfLoadedTracks(video), [{ start: 1800, end: 1803 }, { start: 1810, end: 1812 }]);
-    assert.deepEqual(cuesOfLoadedTracks(null), []);
-});
-
 test('the timing source is a whole-file track, never a translation or a muxed one', () => {
     const d = new JSDOM(`<div id="m">
         <button class="subtitle" data-id="none"></button>
-        <button class="subtitle" data-provider="MediaProbe" data-src="hls-managed"></button>
+        <button class="subtitle" data-provider="MediaProbe" data-src="embedded"></button>
         <button class="subtitle" data-provider="Translated" data-src="https://t/ai.vtt"></button>
         <button class="subtitle" data-provider="OpenSubtitles" data-locked="true" data-src="https://t/locked.vtt"></button>
         <button class="subtitle" data-provider="OpenSubtitles" data-src="https://t/os.vtt"></button>
