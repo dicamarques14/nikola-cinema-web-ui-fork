@@ -225,8 +225,6 @@ func TestMetricNames(t *testing.T) {
 	s.jobs.WithLabelValues("load", JobOK)
 	s.caps.WithLabelValues("unknown")
 	s.capChecks.WithLabelValues("failed")
-	s.fallback.WithLabelValues("user", "unknown")
-	s.vodRoute.WithLabelValues("eac3")
 	families, err := reg.Gather()
 	if err != nil {
 		t.Fatal(err)
@@ -240,8 +238,6 @@ func TestMetricNames(t *testing.T) {
 		"webui_jobs_in_flight":                     dto.MetricType_GAUGE,
 		"webui_transcoder_capability":              dto.MetricType_GAUGE,
 		"webui_transcoder_capability_checks_total": dto.MetricType_COUNTER,
-		"webui_passthrough_fallback_total":         dto.MetricType_COUNTER,
-		"webui_vod_reroute_total":                  dto.MetricType_COUNTER,
 		"webui_trial_shortlink_total":              dto.MetricType_COUNTER,
 		"webui_status_view_total":                  dto.MetricType_COUNTER,
 		"webui_download_ready_total":               dto.MetricType_COUNTER,
@@ -439,64 +435,6 @@ func TestTranscoderCapabilityIsOneHotAndBounded(t *testing.T) {
 	}
 	if got := testutil.CollectAndCount(s.capChecks); got != 3 {
 		t.Errorf("%d check series, want 3", got)
-	}
-}
-
-// The fallback counter's labels come from a form field: a reason or a class
-// outside the closed sets is one series, not one per value.
-func TestPassthroughFallbackIsBounded(t *testing.T) {
-	reg := prometheus.NewRegistry()
-	s := newSet(reg)
-	old := std
-	std = s
-	defer func() { std = old }()
-
-	PassthroughFallback("decode_error", "hevc10-2160")
-	PassthroughFallback("decode_error", "hevc10-2160")
-	PassthroughFallback("user", "hevc8")
-	PassthroughFallback("<script>", "../x")
-	PassthroughFallback("", "")
-	// The audio classes (multichannel audio) are series of their own.
-	PassthroughFallback("decode_error", "dolby")
-	PassthroughFallback("media_error", "aac51")
-	// A fragment loaded again and again (web-ui fragment-loop.js).
-	PassthroughFallback("fragment_loop", "hevc10")
-	if got := testutil.ToFloat64(s.fallback.WithLabelValues("decode_error", "hevc10-2160")); got != 2 {
-		t.Errorf("decode_error/hevc10-2160 = %v, want 2", got)
-	}
-	if got := testutil.ToFloat64(s.fallback.WithLabelValues("other", "unknown")); got != 2 {
-		t.Errorf("other/unknown = %v, want 2", got)
-	}
-	if got := testutil.ToFloat64(s.fallback.WithLabelValues("decode_error", "dolby")); got != 1 {
-		t.Errorf("decode_error/dolby = %v, want 1", got)
-	}
-	if got := testutil.ToFloat64(s.fallback.WithLabelValues("media_error", "aac51")); got != 1 {
-		t.Errorf("media_error/aac51 = %v, want 1", got)
-	}
-	if got := testutil.ToFloat64(s.fallback.WithLabelValues("fragment_loop", "hevc10")); got != 1 {
-		t.Errorf("fragment_loop/hevc10 = %v, want 1", got)
-	}
-	if got := testutil.CollectAndCount(s.fallback); got != 6 {
-		t.Errorf("%d series, want 6", got)
-	}
-}
-
-// The reroute counter's label is the job's reason; anything else is one
-// series.
-func TestVODRerouteIsBounded(t *testing.T) {
-	reg := prometheus.NewRegistry()
-	s := newSet(reg)
-	for _, r := range []string{"eac3_ts", "eac3", "ac3", "no_decoder", "eac3", "<x>", ""} {
-		s.vodReroute(r)
-	}
-	if got := testutil.ToFloat64(s.vodRoute.WithLabelValues("eac3")); got != 2 {
-		t.Errorf("eac3 = %v, want 2", got)
-	}
-	if got := testutil.ToFloat64(s.vodRoute.WithLabelValues("other")); got != 2 {
-		t.Errorf("other = %v, want 2", got)
-	}
-	if got := testutil.CollectAndCount(s.vodRoute); got != 5 {
-		t.Errorf("%d series, want 5", got)
 	}
 }
 

@@ -2,7 +2,6 @@ package action
 
 import (
 	"fmt"
-	"net/url"
 	"regexp"
 	"strconv"
 
@@ -456,20 +455,6 @@ func embeddedSubtitleVisible(codecName, title string) (visible bool, countsForHL
 		return false, true, false
 	}
 	return true, true, forcedTitleRe.MatchString(title)
-}
-
-// embeddedPlaylistURL is the transcoder's subtitle variant for embedded
-// stream i: the same s<N>.m3u8 hls.js plays, so the translation service
-// follows exactly the track the viewer sees. N is the index among the
-// non-PGS subtitle streams -- the transcoder's numbering (NewHLS in
-// content-transcoder counts the same set).
-func embeddedPlaylistURL(base string, i int) string {
-	u, err := url.Parse(base)
-	if err != nil || u.Scheme == "" || u.Host == "" {
-		return ""
-	}
-	u.Path += "/s" + strconv.Itoa(i) + ".m3u8"
-	return u.String()
 }
 
 // sidecarForced reports whether a side-loaded (ExportTag) track is a
@@ -1164,10 +1149,8 @@ func (s *Helper) GetSubtitles(ud *models.VideoStreamUserData, mp *api.MediaProbe
 				if stream.Tags.Language != "" {
 					srcLang = stream.Tags.Language
 				}
-				src := ""
-				if opts.HLSSessionBase != "" {
-					src = embeddedPlaylistURL(opts.HLSSessionBase, i)
-				}
+				// No Src: the player demuxes embedded tracks from the
+				// file itself (movi-player), the chip only names them.
 				res = append(res, ListItem{
 					ID:       "mp-" + strconv.Itoa(i),
 					MPID:     strconv.Itoa(i),
@@ -1175,7 +1158,6 @@ func (s *Helper) GetSubtitles(ud *models.VideoStreamUserData, mp *api.MediaProbe
 					SrcLang:  srcLang,
 					Kind:     "subtitles",
 					Provider: "MediaProbe",
-					Src:      src,
 					Forced:   forced,
 					Badge:    badgeFor("MediaProbe", forced),
 					// srcLang above is a guess ("eng") when the tag is absent.

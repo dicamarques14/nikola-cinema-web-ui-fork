@@ -273,9 +273,7 @@ func TestThpCallsDoNotQuoteTheURL(t *testing.T) {
 			_, err := a.GetOpenSubtitles(ctx, u)
 			return err
 		},
-		"MediaProbe":     func() error { _, err := a.GetMediaProbe(ctx, u); return err },
-		"TranscoderOpen": func() error { _, err := a.CreateTranscoderSession(ctx, u, ""); return err },
-		"TranscoderDrop": func() error { return a.DeleteTranscoderSession(ctx, u, "s1") },
+		"MediaProbe": func() error { _, err := a.GetMediaProbe(ctx, u); return err },
 	}
 	for name, call := range calls {
 		err := call()

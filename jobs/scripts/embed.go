@@ -42,18 +42,14 @@ type EmbedScript struct {
 	cl       *http.Client
 	dsd      *embed.DomainSettingsData
 	warmup   WarmupSettings
-	// decl is the embed page's HEVC passthrough declaration (and a
-	// restart's fallback reason), passed on to the stream it starts.
-	decl models.DecodeRequest
 }
 
 type EmbedAdsData struct {
 	DomainSettings *embed.DomainSettingsData
 }
 
-func NewEmbedScript(tb template.Builder[*web.Context], cl *http.Client, c *web.Context, api *api.Api, i18nSvc *i18n.Service, enricher *enrich.Enricher, settings *models.EmbedSettings, file string, dsd *embed.DomainSettingsData, warmup WarmupSettings, decl models.DecodeRequest) *EmbedScript {
+func NewEmbedScript(tb template.Builder[*web.Context], cl *http.Client, c *web.Context, api *api.Api, i18nSvc *i18n.Service, enricher *enrich.Enricher, settings *models.EmbedSettings, file string, dsd *embed.DomainSettingsData, warmup WarmupSettings) *EmbedScript {
 	return &EmbedScript{
-		decl:     decl,
 		c:        c,
 		api:      api,
 		i18n:     i18nSvc,
@@ -176,7 +172,6 @@ func (s *EmbedScript) Run(ctx context.Context, j *job.Job) (err error) {
 		return err
 	}
 	vsud := models.NewVideoStreamUserData(id, i.ID, &s.settings.StreamSettings)
-	vsud.DecodeRequest = s.decl
 	// Pass nil for user-subtitles and thumbnails: the embed flow omits
 	// the My Subtitles tab (no account context on third-party sites)
 	// and the inline share button isn't surfaced in embed players, so
@@ -277,7 +272,7 @@ func (s *EmbedScript) renderAds(j *job.Job, c *web.Context, dsd *embed.DomainSet
 	return
 }
 
-func Embed(tb template.Builder[*web.Context], cl *http.Client, c *web.Context, api *api.Api, i18nSvc *i18n.Service, enricher *enrich.Enricher, settings *models.EmbedSettings, file string, dsd *embed.DomainSettingsData, warmup WarmupSettings, decl models.DecodeRequest) (r job.Runnable, hash string, err error) {
+func Embed(tb template.Builder[*web.Context], cl *http.Client, c *web.Context, api *api.Api, i18nSvc *i18n.Service, enricher *enrich.Enricher, settings *models.EmbedSettings, file string, dsd *embed.DomainSettingsData, warmup WarmupSettings) (r job.Runnable, hash string, err error) {
 	hourKey := actionClock().UTC().Format("2006010215")
 	// The visitor's session identity is part of the key for the same reason
 	// it is in the action key: without it every visitor of a given embed
@@ -289,10 +284,7 @@ func Embed(tb template.Builder[*web.Context], cl *http.Client, c *web.Context, a
 	if c.ApiClaims != nil {
 		sessionKey = c.ApiClaims.SessionID
 	}
-	// The declaration, like the action key's: a render for one browser's
-	// decoders is not another's. Only when there is one, so an embed that
-	// declares nothing keeps the key it has always had.
-	hash = fmt.Sprintf("%x", sha1.Sum([]byte("/"+fmt.Sprintf("%+v", dsd)+"/"+c.ApiClaims.Role+"/"+fmt.Sprintf("%+v", settings)+"/"+hourKey+"/"+c.Lang+"/"+sessionKey+decl.Key())))
-	r = NewEmbedScript(tb, cl, c, api, i18nSvc, enricher, settings, file, dsd, warmup, decl)
+	hash = fmt.Sprintf("%x", sha1.Sum([]byte("/"+fmt.Sprintf("%+v", dsd)+"/"+c.ApiClaims.Role+"/"+fmt.Sprintf("%+v", settings)+"/"+hourKey+"/"+c.Lang+"/"+sessionKey)))
+	r = NewEmbedScript(tb, cl, c, api, i18nSvc, enricher, settings, file, dsd, warmup)
 	return
 }

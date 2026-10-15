@@ -15,8 +15,8 @@ import (
 
 // purge: run the job again instead of replaying the stored one (the player's
 // stream restart, handlers/embed post.go).
-func (s *Jobs) Embed(c *web.Context, cl *http.Client, settings *models.EmbedSettings, dsd *embed.DomainSettingsData, decl models.DecodeRequest, purge bool) (j *job.Job, err error) {
-	es, hash, err := scripts.Embed(s.tb, cl, c, s.api, s.i18n, s.enricher, settings, "", dsd, s.warmup, decl)
+func (s *Jobs) Embed(c *web.Context, cl *http.Client, settings *models.EmbedSettings, dsd *embed.DomainSettingsData, purge bool) (j *job.Job, err error) {
+	es, hash, err := scripts.Embed(s.tb, cl, c, s.api, s.i18n, s.enricher, settings, "", dsd, s.warmup)
 	if err != nil {
 		return
 	}

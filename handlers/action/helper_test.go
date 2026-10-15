@@ -1235,12 +1235,10 @@ func TestSavedTranslationIsPlayingNotOffered(t *testing.T) {
 	}
 }
 
-// TestGetSubtitlesEmbeddedGetsPlaylistSrcInSession: inside a transcoder
-// session, an embedded (MediaProbe) track's Src is the session's own
-// s<N>.m3u8 playlist -- the same variant hls.js plays -- so it can feed
-// pickTranslationSource. Outside a session (native MP4 path,
-// HLSSessionBase empty) it stays Src-less, as before.
-func TestGetSubtitlesEmbeddedGetsPlaylistSrcInSession(t *testing.T) {
+// TestGetSubtitlesEmbeddedHasNoSrc: an embedded (MediaProbe) track is a
+// chip with no Src. The player demuxes it from the file itself
+// (movi-player); there is no transcoder playlist to point at any more.
+func TestGetSubtitlesEmbeddedHasNoSrc(t *testing.T) {
 	h := NewHelper()
 	mp := probeWith(`[
 		{"codec_type":"video","codec_name":"h264"},
@@ -1248,8 +1246,7 @@ func TestGetSubtitlesEmbeddedGetsPlaylistSrcInSession(t *testing.T) {
 		{"codec_type":"subtitle","codec_name":"dvd_subtitle"},
 		{"codec_type":"subtitle","codec_name":"subrip","tags":{"language":"rus","title":"Full"}}
 	]`)
-	opts := SubtitleOpts{PreferredLang: "pt", HLSSessionBase: "https://edge.example/h/a.mkv~hls/session/0123456789abcdef0123456789abcdef?api-key=K&token=T"}
-	lis := h.GetSubtitles(&models.VideoStreamUserData{}, mp, &ra.ExportTag{}, nil, &models.ExternalData{}, nil, opts)
+	lis := h.GetSubtitles(&models.VideoStreamUserData{}, mp, &ra.ExportTag{}, nil, &models.ExternalData{}, nil, SubtitleOpts{PreferredLang: "pt"})
 	var emb *ListItem
 	for i := range lis {
 		if lis[i].Provider == "MediaProbe" {
@@ -1259,15 +1256,8 @@ func TestGetSubtitlesEmbeddedGetsPlaylistSrcInSession(t *testing.T) {
 	if emb == nil || emb.MPID != "1" {
 		t.Fatalf("embedded item: %+v", emb)
 	}
-	if want := "https://edge.example/h/a.mkv~hls/session/0123456789abcdef0123456789abcdef/s1.m3u8?api-key=K&token=T"; emb.Src != want {
-		t.Fatalf("src=%q want %q", emb.Src, want)
-	}
-	// Negative control: no session -> no Src (native MP4 path).
-	lis = h.GetSubtitles(&models.VideoStreamUserData{}, mp, &ra.ExportTag{}, nil, &models.ExternalData{}, nil, SubtitleOpts{PreferredLang: "pt"})
-	for _, li := range lis {
-		if li.Provider == "MediaProbe" && li.Src != "" {
-			t.Fatalf("Src without a session: %q", li.Src)
-		}
+	if emb.Src != "" {
+		t.Fatalf("embedded track has a Src: %q", emb.Src)
 	}
 }
 

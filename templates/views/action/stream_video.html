@@ -21,37 +21,9 @@
            data-share-url="{{ domain }}{{ langPath $.Lang (printf "/%s" .VideoStreamUserData.ResourceID) }}{{ if .Item }}?file={{ .Item.PathStr | urlquery }}{{ end }}"
            {{ if .ExternalData.Poster }}poster="{{ .ExternalData.Poster }}"
            {{ else if .ExportTag.Poster }}poster="{{ .ExportTag.Poster }}" {{ end }}
-           {{ if .TranscoderSession }}data-duration="{{ .TranscoderSession.Duration }}"
-           {{ else if .MediaProbe }}data-duration="{{ .MediaProbe | getDurationSec }}" {{ end }}
-           {{/* The source's video codecs, as the job's media probe saw them
-                (a cover picture is one too): read only by the codec-support
-                event (lib/player/codec-support.js). Absent = no probe. */}}
-           {{ if .MediaProbe }}data-video-codecs="{{ range .MediaProbe.Streams }}{{ if eq .CodecType "video" }}{{ .CodecName }} {{ end }}{{ end }}"{{ end }}
-           {{ if .TranscoderSession }}data-session-id="{{ .TranscoderSession.ID }}"{{ end }}
-           {{ if .SessionSeekURL }}data-session-seek-url="{{ .SessionSeekURL }}"{{ end }}
-           {{- /* The transcoder session's route and its reason
-                (content-transcoder POST /session: passthrough, copy,
-                reencode, audio; ok, no_declaration, ...), the declaration
-                the start sent (data-decode) and, for a passthrough, the
-                decoder class its video needs and how long one segment may
-                load (StreamContent.VideoClass, FragLoadMs). Read by the
-                player's passthrough handling and stream-start
-                (docs/player.md). Trimmed and only where known: without
-                them the tag is what it was. */}}
-           {{- with .TranscoderSession }}{{ if .VideoRoute }} data-video-route="{{ .VideoRoute }}"{{ end }}{{ if .RouteReason }} data-route-reason="{{ .RouteReason }}"{{ end }}{{ end }}
-           {{- if .VideoClass }} data-video-class="{{ .VideoClass }}"{{ end }}
-           {{- if .FragLoadMs }} data-frag-load-ms="{{ .FragLoadMs }}"{{ end }}
-           {{- /* What the declaration made of the session's audio, on any
-                route (StreamContent.AudioClass: dolby, aac51): the class a
-                failure of that audio is charged to. Only for a start that
-                declared an audio token and got such audio. */}}
-           {{- if .AudioClass }} data-audio-class="{{ .AudioClass }}"{{ end }}
-           {{- /* The file, for the player's own restart -- a passthrough's
-                fallback, or a multichannel-audio start's: the restart is
-                this file's, even where the page's start form has moved on
-                to another (lib/player/passthrough.js). */}}
-           {{- if .PlayerRestarts }} data-item-id="{{ .VideoStreamUserData.ItemID }}"{{ end }}
-           {{- with .VideoStreamUserData }}{{ if .Decode }} data-decode="{{ .Decode }}"{{ end }}{{ end }}
+           {{/* The file's duration as the job's media probe saw it; the
+                player reads its own once the file opens. */}}
+           {{ if .MediaProbe }}data-duration="{{ .MediaProbe | getDurationSec }}" {{ end }}
            {{ if .GraceDurationSec }}data-grace-duration-sec="{{ .GraceDurationSec }}"{{ end }}
            {{- /* The resource status's plan-box line while this player buffers
                 under the viewer's cap, with the file's bitrate the status
@@ -96,7 +68,9 @@
            playsinline
            data-settings="{{ .Settings | json }}">
         {{ range .ExportTag.Sources }}
-        <source src="{{ .Src }}" type="{{ .Type }}">
+        {{/* The file itself (jobs/scripts streamContent, Step 4): no
+             type, the player sniffs the container. */}}
+        <source src="{{ .Src }}"{{ with .Type }} type="{{ . }}"{{ end }}>
         {{ end }}
         {{/* Browsers fetch every <track> element on page load regardless of
              its mode, and with 40+ OpenSubtitles tracks that burst tripped

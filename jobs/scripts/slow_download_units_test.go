@@ -13,13 +13,13 @@ import (
 
 // The cap modal and the transfer status speak of one stream in one unit, the
 // megabit thp's limiter caps in (2^20 bits): at a 5M cap the owner's 1080p
-// file reads "5 -> 8,7" in the modal, and the status's line under the player
-// says "up to 5, and this file needs 8,7" of the same stream. Until
+// file reads "5 -> 8,9" in the modal, and the status's line under the player
+// says "up to 5, and this file needs 8,9" of the same stream. Until
 // 2026-09-29 the modal said "5.0 -> 9.1": 10^6 bits, and '.' in every
 // language.
 func TestCapModal_SaysWhatTheStatusSays(t *testing.T) {
 	s := &ActionScript{i18n: i18n.New(os.DirFS("../../locales"))}
-	bps := capGateBitrate(probeJSON(t, probeOwner), true, nil)
+	bps := getVideoBitrate(probeJSON(t, probeOwner))
 	tpl, err := template.New("slow_download.html").Funcs(offerFuncs(t, prodCatalog(), true)).
 		ParseFiles("../../templates/views/action/errors/slow_download.html", "../../templates/partials/icons.html")
 	if err != nil {
@@ -33,8 +33,8 @@ func TestCapModal_SaysWhatTheStatusSays(t *testing.T) {
 		lang, capN, needN, sub string
 		banned                 []string
 	}{
-		{"ru", "5", "8,7", "Без подписки — до 5 Мбит/с, а файлу нужно 8,7 Мбит/с", []string{`">9.1</div>`, `">5.0</div>`, `">8.7</div>`}},
-		{"en", "5", "8.7", "Without a subscription — up to 5 Mbps, and this file needs 8.7 Mbps", []string{`">9.1</div>`, `">5.0</div>`}},
+		{"ru", "5", "8,9", "Без подписки — до 5 Мбит/с, а файлу нужно 8,9 Мбит/с", []string{`">9.1</div>`, `">5.0</div>`, `">8.7</div>`}},
+		{"en", "5", "8.9", "Without a subscription — up to 5 Mbps, and this file needs 8.9 Mbps", []string{`">9.1</div>`, `">5.0</div>`}},
 	} {
 		wc := &web.Context{Lang: c.lang, ApiClaims: &api.Claims{Rate: "5M"}}
 		if got := s.statusStallSub(wc, bps); got != c.sub {
@@ -52,7 +52,7 @@ func TestCapModal_SaysWhatTheStatusSays(t *testing.T) {
 			[]string{`leading-none">` + c.capN + `</div>`, `leading-none">` + c.needN + `</div>`,
 				// Analytics keep their numbers (html/template quotes them
 				// in a script), in the same megabit.
-				`measured_mbps: "5.0"`, `required_mbps: "8.7"`},
+				`measured_mbps: "5.0"`, `required_mbps: "8.9"`},
 			c.banned)
 	}
 }

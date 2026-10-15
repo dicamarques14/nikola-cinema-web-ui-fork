@@ -74,8 +74,6 @@ type set struct {
 	trial      *prometheus.CounterVec
 	caps       *prometheus.GaugeVec
 	capChecks  *prometheus.CounterVec
-	fallback   *prometheus.CounterVec
-	vodRoute   *prometheus.CounterVec
 	statusView *prometheus.CounterVec
 	dlReady    *prometheus.CounterVec
 }
@@ -124,14 +122,6 @@ func newSet(r prometheus.Registerer) *set {
 			Namespace: namespace, Name: "transcoder_capability_checks_total",
 			Help: "Background questions to content-transcoder's GET /capabilities, by result (on, off, failed = no answer; the last answer stays).",
 		}, []string{"result"}),
-		fallback: f.NewCounterVec(prometheus.CounterOpts{
-			Namespace: namespace, Name: "passthrough_fallback_total",
-			Help: "Stream starts that restart a file whose HEVC passthrough failed in the browser, by reason (codecs_rejected, decode_error, media_error, src_unsupported, no_frames, user, fragment_loop; vod_codecs: an nginx-vod stream the browser refused, restarted to the transcoder; other = anything else) and the decoder class the stream needed (hevc8, hevc10, hevc8-2160, hevc10-2160; unknown) -- or whose multichannel audio failed (class dolby, aac51; on any route).",
-		}, []string{"reason", "class"}),
-		vodRoute: f.NewCounterVec(prometheus.CounterOpts{
-			Namespace: namespace, Name: "vod_reroute_total",
-			Help: "MP4 stream starts sent to the transcoder instead of nginx-vod because the browser cannot play their audio as nginx-vod serves it, by reason (eac3_ts: E-AC-3 in nginx-vod's MPEG-TS, which no hls.js plays; eac3, ac3: not declared; no_decoder: DTS; unserved_audio: audio nginx-vod serves none of; hevc: HEVC the declaration does not cover; fallback: a restart after the browser failed the file; other = anything else). jobs/scripts/vod_route.go.",
-		}, []string{"reason"}),
 		statusView: f.NewCounterVec(prometheus.CounterOpts{
 			Namespace: namespace, Name: "status_view_total",
 			Help: "Resource page status streams that showed a state, by statusview key and mode (chain, badge; other = anything else): once per stream and pair, the first time a message carries it. Not the browser's refinement of tier (tier_dl, stream_ok, stream_stall).",
@@ -397,47 +387,6 @@ func TranscoderCapabilityCheck(result string) {
 		result = "failed"
 	}
 	std.capChecks.WithLabelValues(result).Inc()
-}
-
-// Passthrough fallback reasons and decoder classes (docs/player.md,
-// "Passthrough: errors and fallback"). Closed sets: the values come from a
-// form field (models.ParseDecodeRequest allowlists them already; this keeps
-// the series bounded whoever calls).
-var (
-	fallbackReasons = map[string]bool{"codecs_rejected": true, "decode_error": true, "media_error": true, "src_unsupported": true, "no_frames": true, "user": true, "fragment_loop": true, "vod_codecs": true}
-	fallbackClasses = map[string]bool{"hevc8": true, "hevc10": true, "hevc8-2160": true, "hevc10-2160": true, "dolby": true, "aac51": true}
-)
-
-// PassthroughFallback counts one start that restarts a file whose
-// passthrough failed in the browser.
-func PassthroughFallback(reason, class string) {
-	std.passthroughFallback(reason, class)
-}
-
-func (s *set) passthroughFallback(reason, class string) {
-	if !fallbackReasons[reason] {
-		reason = "other"
-	}
-	if !fallbackClasses[class] {
-		class = "unknown"
-	}
-	s.fallback.WithLabelValues(reason, class).Inc()
-}
-
-// vodRerouteReasons: jobs/scripts/vod_route.go's reasons, a closed set.
-var vodRerouteReasons = map[string]bool{"eac3_ts": true, "eac3": true, "ac3": true, "no_decoder": true, "unserved_audio": true, "hevc": true, "fallback": true}
-
-// VODReroute counts one MP4 start sent to the transcoder instead of
-// nginx-vod.
-func VODReroute(reason string) {
-	std.vodReroute(reason)
-}
-
-func (s *set) vodReroute(reason string) {
-	if !vodRerouteReasons[reason] {
-		reason = "other"
-	}
-	s.vodRoute.WithLabelValues(reason).Inc()
 }
 
 // DownloadReady counts one download job that handed the viewer its link.

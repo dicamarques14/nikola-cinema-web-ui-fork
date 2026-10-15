@@ -7,11 +7,11 @@ import (
 	"github.com/webtor-io/web-ui/models"
 )
 
-// Keys recorded at acf12dea (before the HEVC passthrough declaration
-// existed) for the fixtures in job_key_fixture_test.go, with the clock
-// pinned to jobKeyAt. A start that declares nothing must keep the job id it
-// had: a changed id splits the render cache and the dedup of a visitor's
-// repeated starts for nothing.
+// Keys recorded at acf12dea for the fixtures in job_key_fixture_test.go,
+// with the clock pinned to jobKeyAt. Removing the HEVC passthrough
+// declaration (raw-file playback, movi-player) must not move them: a
+// changed id splits the render cache and the dedup of a visitor's repeated
+// starts for nothing.
 const (
 	goldenActionID = "a95e9c41040c89d71060c5bf48691c676bc86080"
 	goldenEmbedKey = "7febc81e2317163fdc90871f25ab39db96056fb1"
@@ -28,59 +28,25 @@ func actionID(vsud *models.VideoStreamUserData) string {
 	return id
 }
 
-func embedKey(t *testing.T, decl models.DecodeRequest) string {
+func embedKey(t *testing.T) string {
 	t.Helper()
-	_, hash, err := Embed(nil, nil, jobKeyContext(), nil, nil, nil, jobKeyEmbedSettings(), "", nil, WarmupSettings{}, decl)
+	_, hash, err := Embed(nil, nil, jobKeyContext(), nil, nil, nil, jobKeyEmbedSettings(), "", nil, WarmupSettings{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return hash
 }
 
-func TestActionIDWithoutDeclarationIsUnchanged(t *testing.T) {
+func TestActionIDIsUnchanged(t *testing.T) {
 	pinClock(t)
 	if got := actionID(jobKeyVSUD()); got != goldenActionID {
 		t.Errorf("job id %s, want %s (acf12dea)", got, goldenActionID)
 	}
 }
 
-func TestEmbedKeyWithoutDeclarationIsUnchanged(t *testing.T) {
+func TestEmbedKeyIsUnchanged(t *testing.T) {
 	pinClock(t)
-	if got := embedKey(t, models.DecodeRequest{}); got != goldenEmbedKey {
+	if got := embedKey(t); got != goldenEmbedKey {
 		t.Errorf("embed key %s, want %s (acf12dea)", got, goldenEmbedKey)
-	}
-}
-
-// Two browsers of one visitor that declare differently never share a
-// render, and a restart after a failed passthrough is a start of its own.
-// A declaration of audio tokens only is one too: its session's audio may be
-// 5.1 or Dolby, which a browser that declared nothing must not be served.
-func TestJobKeysFollowTheDeclaration(t *testing.T) {
-	pinClock(t)
-	reqs := []models.DecodeRequest{
-		{},
-		{Decode: "hevc8,hevc10"},
-		{Decode: "hevc8,hevc10,hevc8-2160,hevc10-2160,hdr-pq"},
-		{Decode: "unknown"},
-		{FallbackReason: "decode_error", FallbackClass: "hevc10"},
-		{FallbackReason: "user", FallbackClass: "unknown"},
-		{Decode: "aac51"},
-		{Decode: "aac51,ac3,ec3"},
-		{Decode: "hevc8,hevc10,aac51"},
-	}
-	actions, embeds := map[string]int{}, map[string]int{}
-	for i, r := range reqs {
-		v := jobKeyVSUD()
-		v.DecodeRequest = r
-		id := actionID(v)
-		if j, ok := actions[id]; ok {
-			t.Errorf("action: requests %d and %d share the id %s", j, i, id)
-		}
-		actions[id] = i
-		k := embedKey(t, r)
-		if j, ok := embeds[k]; ok {
-			t.Errorf("embed: requests %d and %d share the key %s", j, i, k)
-		}
-		embeds[k] = i
 	}
 }

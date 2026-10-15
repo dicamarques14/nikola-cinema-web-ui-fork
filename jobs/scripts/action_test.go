@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	claimsproto "github.com/webtor-io/claims-provider/proto"
-	"github.com/webtor-io/web-ui/models"
 	"github.com/webtor-io/web-ui/services/api"
 	"github.com/webtor-io/web-ui/services/claims"
 	"github.com/webtor-io/web-ui/services/statusview"
@@ -143,56 +142,23 @@ func TestCheckCachedRateLimit_CapEqualsRequirement(t *testing.T) {
 	}
 }
 
-// The bandwidth gate holds the plan's cap against what the player pulls
-// (playedBitrate), the number the transfer status's "…and this file needs N"
-// is made of -- not the file's own rate with every dub in it -- and falls
-// back to the file's rate only where what the player pulls is not known.
-func TestCapGateBitrate(t *testing.T) {
-	const aac48 = 128 * 48000 / 44
-	dts := probeJSON(t, probeTwoDTSDubs)
-	cases := []struct {
-		name       string
-		mp         *api.MediaProbe
-		transcoded bool
-		want       int64
-	}{
-		{"two dubs: the stream, not the file", dts, true, 3500000 + aac48},
-		{"the owner's file: the video and one dub", probeJSON(t, probeOwner), true, 8934213 + aac48},
-		{"re-encoded video, not known: the file's rate",
-			probeJSON(t, `{"format":{"bit_rate":"5650625"},"streams":[{"codec_type":"video","codec_name":"hevc","tags":{"BPS":"4999862"}},
-			{"codec_type":"audio","codec_name":"eac3","bit_rate":"640000","channels":6,"sample_rate":"48000"}]}`), true, 5650625},
-		{"stale tags, not known: the file's rate", probeJSON(t, probeStale), true, 718649},
-		{"no rate of the file's either: its streams' sum",
-			probeJSON(t, `{"format":{},"streams":[{"codec_type":"video","codec_name":"hevc","bit_rate":"4000000"},
-			{"codec_type":"audio","codec_name":"aac","bit_rate":"128000","channels":2,"sample_rate":"48000"}]}`), true, 4128000},
-	}
-	for _, c := range cases {
-		if got := capGateBitrate(c.mp, c.transcoded, nil); got != c.want {
-			t.Errorf("%s: %d, want %d", c.name, got, c.want)
-		}
-	}
-	// The same number as the status's line: the cap modal and the status
-	// speak of one stream.
-	owner := probeJSON(t, probeOwner)
-	if capGateBitrate(owner, true, nil) != playedBitrate(owner, true, nil) {
-		t.Error("the cap gate and the status's marks read different rates")
-	}
-	// The declaration counts there too: AC-3 5.1 is AAC 5.1 at 384 kbit/s
-	// for a browser that declares aac51, stereo for one that does not.
-	aac51 := &models.VideoStreamUserData{DecodeRequest: models.DecodeRequest{Decode: "aac51"}}
-	ac351 := probeJSON(t, `{"format":{"bit_rate":"5938688"},"streams":[{"codec_type":"video","codec_name":"h264","tags":{"BPS":"5112688"}},
-		{"codec_type":"audio","codec_name":"ac3","bit_rate":"384000","channels":6,"sample_rate":"48000"}]}`)
-	if got := capGateBitrate(ac351, true, aac51); got != 5112688+384000 {
-		t.Errorf("AC-3 5.1 with aac51: %d", got)
-	}
-	// At a 5 Mbps cap the two-dub file streams at 3.6: no cap modal for it.
-	// By the file's 6.6 it had one.
+// The bandwidth gate holds the plan's cap against the file's own rate
+// (getVideoBitrate): the player pulls the file itself, every track of it,
+// so a dub the viewer never hears still crosses thp's limiter.
+func TestCapGate_HoldsTheFileRate(t *testing.T) {
 	capped := ctxWith("5M", "free")
-	if _, limited := checkCachedRateLimit(capped, capGateBitrate(dts, true, nil)); limited {
-		t.Error("a 3.6 Mbps stream at a 5 Mbps cap got the cap modal")
+	// 6.6 Mbps as a file is over a 5 Mbps cap, whichever dub plays.
+	if _, limited := checkCachedRateLimit(capped, getVideoBitrate(probeJSON(t, probeTwoDTSDubs))); !limited {
+		t.Error("a 6.6 Mbps file at a 5 Mbps cap got no cap modal")
 	}
-	if sdd, limited := checkCachedRateLimit(capped, capGateBitrate(probeJSON(t, probeOwner), true, nil)); !limited || !almostEqual(sdd.RequiredSpeedMbps, float64(8934213+aac48)/(1<<20)) {
+	if sdd, limited := checkCachedRateLimit(capped, getVideoBitrate(probeJSON(t, probeOwner))); !limited || !almostEqual(sdd.RequiredSpeedMbps, float64(9352494)/(1<<20)) {
 		t.Errorf("the owner's file over a 5 Mbps cap: limited %v, file needs %v", limited, sdd.RequiredSpeedMbps)
+	}
+	// No rate of the file's: its streams' sum.
+	sum := probeJSON(t, `{"format":{},"streams":[{"codec_type":"video","codec_name":"hevc","bit_rate":"4000000"},
+		{"codec_type":"audio","codec_name":"aac","bit_rate":"128000","channels":2,"sample_rate":"48000"}]}`)
+	if got := getVideoBitrate(sum); got != 4128000 {
+		t.Errorf("streams' sum: %d, want 4128000", got)
 	}
 }
 
@@ -227,9 +193,9 @@ func TestSwarmGate_HoldsTheFileRate(t *testing.T) {
 	}
 	for _, tc := range cases {
 		mp := probeJSON(t, tc.probe)
-		fileRate, streamRate := getVideoBitrate(mp), capGateBitrate(mp, true, nil)
-		if !(float64(streamRate) < tc.measured*8 && tc.measured*8 < float64(fileRate)) {
-			t.Fatalf("%s: the case needs a swarm between the played rate %d and the file's %d", tc.name, streamRate, fileRate)
+		fileRate := getVideoBitrate(mp)
+		if !(tc.measured*8 < float64(fileRate)) {
+			t.Fatalf("%s: the case needs a swarm under the file's rate %d", tc.name, fileRate)
 		}
 		if !needsFullMeasure(tc.lowerBound, fileRate, streamWarmupSize, bandwidthTestSize) {
 			t.Errorf("%s: a %.1f Mbps lower bound passed a %.1f Mbps file unmeasured", tc.name, statusview.BytesToMbps(tc.lowerBound), statusview.BitsToMbps(float64(fileRate)))
@@ -252,9 +218,10 @@ func TestSwarmGate_HoldsTheFileRate(t *testing.T) {
 
 // streamContent is not testable without the whole stream start behind it,
 // so this holds the wiring of Step 3: the swarm's checks (needsFullMeasure,
-// swarmTooSlow, the BT-slow modal's buildSlowDownloadData) read the file's
-// own rate (getVideoBitrate), the cap's (checkCachedRateLimit) the played
-// stream's (capGateBitrate), and nothing else reads either.
+// swarmTooSlow, the BT-slow modal's buildSlowDownloadData) and the cap's
+// (checkCachedRateLimit) all read the file's own rate (getVideoBitrate):
+// the player pulls the whole file. Besides the gate only the status marks
+// read it.
 func TestGateBitrate_WhichRateEachBranchReads(t *testing.T) {
 	f, err := parser.ParseFile(token.NewFileSet(), "action.go", nil, 0)
 	if err != nil {
@@ -285,11 +252,11 @@ func TestGateBitrate_WhichRateEachBranchReads(t *testing.T) {
 			return true
 		})
 	}
-	if got := calls["getVideoBitrate"]; len(got) != 2 || !slices.Contains(got, "capGateBitrate") || !slices.Contains(got, "streamContent") {
-		t.Errorf("getVideoBitrate called from %v, want capGateBitrate's fallback and the swarm's gate in streamContent", got)
+	if got := calls["getVideoBitrate"]; len(got) != 2 || !slices.Contains(got, "setStatusMarks") || !slices.Contains(got, "streamContent") {
+		t.Errorf("getVideoBitrate called from %v, want the gate in streamContent and setStatusMarks", got)
 	}
-	if got := calls["capGateBitrate"]; len(got) != 1 || got[0] != "streamContent" {
-		t.Errorf("capGateBitrate called from %v, want the cap's gate in streamContent", got)
+	if got := calls["capGateBitrate"]; len(got) != 0 {
+		t.Errorf("capGateBitrate is back, called from %v: the player pulls the whole file, there is no second rate", got)
 	}
 	if gate == nil {
 		t.Fatal("no streamContent")
@@ -316,7 +283,7 @@ func TestGateBitrate_WhichRateEachBranchReads(t *testing.T) {
 		{"needsFullMeasure", 1, "getVideoBitrate"},
 		{"swarmTooSlow", 1, "getVideoBitrate"},
 		{"buildSlowDownloadData", 2, "getVideoBitrate"},
-		{"checkCachedRateLimit", 1, "capGateBitrate"},
+		{"checkCachedRateLimit", 1, "getVideoBitrate"},
 	}
 	seen := map[string]int{}
 	ast.Inspect(gate.Body, func(n ast.Node) bool {

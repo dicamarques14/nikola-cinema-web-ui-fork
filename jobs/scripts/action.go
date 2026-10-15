@@ -60,12 +60,10 @@ type StreamContent struct {
 	// container's chapters say it (credits.go); 0 when they do not.
 	CreditsAt float64
 	// Next is the file that follows this one, nil when there is none.
-	Next              *NextItem
-	Settings          *models.StreamSettings
-	ExternalData      *models.ExternalData
-	DomainSettings    *embed.DomainSettingsData
-	TranscoderSession *api.TranscoderSession
-	SessionSeekURL    string
+	Next           *NextItem
+	Settings       *models.StreamSettings
+	ExternalData   *models.ExternalData
+	DomainSettings *embed.DomainSettingsData
 	// GraceDurationSec is non-zero only for free-tier users when grace rules
 	// are enabled. Surfaced to the player JS so it knows when to show the
 	// soft signup CTA after the grace window passes.
@@ -94,15 +92,13 @@ type StreamContent struct {
 	// stream while its player buffers under the viewer's cap: "Without a
 	// subscription — up to 5 Mbps, and this file needs 8 Mbps"
 	// (statusview.StallSub). The status stream cannot know what the player
-	// pulls; this job probed the file (playedBitrate: one video and one
-	// audio track, as the player gets them). The page prefers this line over
+	// pulls; this job probed the file (the file's own rate: the player pulls
+	// the whole file). The page prefers this line over
 	// the status's own, which lacks the second half. "" without a cap.
 	StatusStallSub string
 	// StatusFitsCap: the played stream needs no more than the viewer's cap,
-	// with statusview.FitsMargin to spare (statusview.FitsCap) -- or, what
-	// it pulls not known, a bound on that does (playedBitrateRouted's
-	// ceiling: the file for tracks served as they are, the transcoder's
-	// cap on a re-encode) -- so it plays smoothly at the cap and the status
+	// with statusview.FitsMargin to spare (statusview.FitsCap) -- so it
+	// plays smoothly at the cap and the status
 	// says nothing under the bar while it plays. Only that: a real stall of
 	// it while thp's limiter holds the requests still gets the stream box
 	// -- the estimate is not proof (the page's present, lib/transferStatus.js).
@@ -110,11 +106,10 @@ type StreamContent struct {
 	// StatusOverCap: the played stream needs more than the viewer's cap
 	// (statusview.OverCap). At the cap its player stalls once the buffer
 	// runs out, so the status shows the stream box as soon as it is due,
-	// while the player still plays. Never from a bound. Neither this nor
-	// StatusFitsCap: what the player pulls is not known (playedBitrate 0:
-	// re-encoded video, no per-track numbers, stale ones) and no bound on
-	// it fits, or it is under the cap by less than statusview.FitsMargin;
-	// the fact while it plays, the box at a real stall.
+	// while the player still plays. Neither this nor StatusFitsCap: the
+	// file's rate is not known, or it is under the cap by less than
+	// statusview.FitsMargin; the fact while it plays, the box at a real
+	// stall.
 	StatusOverCap bool
 	// StatusAnswered: this run is the slow-download modal's "watch as is"
 	// (force-slow) -- the viewer was just told the stream will be slower
@@ -129,59 +124,6 @@ type StreamContent struct {
 	// rendered on the <video> as data-cap-card-*. nil without a grace
 	// window, in an embed, or without a cap.
 	CapCard *CapCard
-	// VideoClass is, for a passthrough session, the decoder class its video
-	// needs (passthroughClass: hevc8, hevc10, hevc8-2160, hevc10-2160 --
-	// "unknown" when the master does not say): the class a failure in the
-	// browser is charged to (data-video-class). "" on every other route.
-	VideoClass string
-	// FragLoadMs is, for a passthrough session, how long one segment may
-	// take to load before the player gives up on it (passthroughFragLoadMs,
-	// data-frag-load-ms). 0 on every other route.
-	FragLoadMs int
-	// AudioClass is what the start's declaration made of the session's
-	// audio, on any route (sessionAudioClass: "dolby", "aac51"): the class a
-	// failure of that audio in the browser is charged to
-	// (data-audio-class). "" for a start that declared no audio token, and
-	// for audio the transcoder did not change.
-	AudioClass string
-}
-
-// VideoRoute is the transcoder session's route ("" without a session or
-// from a transcoder that predates routes).
-func (sc *StreamContent) VideoRoute() string {
-	if sc == nil || sc.TranscoderSession == nil {
-		return ""
-	}
-	return sc.TranscoderSession.VideoRoute
-}
-
-// Passthrough: the session hands the browser the source's video as it is.
-func (sc *StreamContent) Passthrough() bool {
-	return sc.VideoRoute() == videoRoutePassthrough
-}
-
-// PlayerRestarts: the player may give this file up to a restart of its own
-// -- a passthrough, or a start that declared multichannel audio on any
-// route (lib/player/passthrough.js) -- and needs the file's item id for it
-// (data-item-id). A start that declared nothing restarts itself only off
-// nginx-vod.
-func (sc *StreamContent) PlayerRestarts() bool {
-	return sc.Passthrough() || (sc.VideoStreamUserData != nil && sc.VideoStreamUserData.DeclaresAudio()) || sc.vodStream()
-}
-
-// vodStream: the player's source is nginx-vod's (rest-api's ~vod URL), which
-// the player gives up to a restart where the browser refuses its codecs
-// (lib/player/vod-guard.js).
-func (sc *StreamContent) vodStream() bool {
-	if sc.ExportTag == nil {
-		return false
-	}
-	for _, src := range sc.ExportTag.Sources {
-		if strings.Contains(src.Src, "~vod/") {
-			return true
-		}
-	}
-	return false
 }
 
 const (
@@ -393,28 +335,6 @@ func episodeTag(ref *models.VideoRef) string {
 	return fmt.Sprintf("S%02dE%02d", ref.Season, ref.Episode)
 }
 
-// capGateBitrate is what the bandwidth gate (streamContent, Step 3) holds the
-// plan's cap against, in bits a second: what the player pulls
-// (playedBitrate: the video and one audio track, as the transcoder or
-// nginx-vod serve them), because that is what thp caps -- the same number
-// the transfer status's "…and this file needs N" and its over-the-cap mark
-// are made of (setStatusMarks), so the cap modal's "file needs" and the
-// status say one thing. The file's own rate counts every dub and commentary
-// besides: a 3.5 Mbps H.264 with two 1.5 Mbps DTS dubs reads 6.6 as a file,
-// and at a 5 Mbps cap the gate showed the cap modal, "file needs 6.6", for a
-// transcoded stream of 3.6. Where what the player pulls is not known
-// (re-encoded video, tags that disagree with the file, no per-track numbers)
-// it falls back to the file's rate, as the cap was always held: an unknown
-// stream is no reason to skip the check.
-//
-// The swarm is not held against it: see getVideoBitrate.
-func capGateBitrate(mp *api.MediaProbe, transcoded bool, vsud *models.VideoStreamUserData) int64 {
-	if bps := playedBitrate(mp, transcoded, vsud); bps > 0 {
-		return bps
-	}
-	return getVideoBitrate(mp)
-}
-
 // getVideoBitrate is the file's own bitrate: the container's, or the sum of
 // its streams' where the container has none. It is what the bandwidth gate
 // holds the SWARM against (needsFullMeasure, swarmTooSlow, the BT-slow
@@ -525,6 +445,23 @@ func exportMeta(it ra.ExportItem) ra.ExportMeta {
 	return *it.Meta
 }
 
+// playbackURL is the download URL as the player's source: without
+// download=true, which only makes thp answer Content-Disposition:
+// attachment. Returned as it is when it does not parse.
+func playbackURL(downloadURL string) string {
+	u, err := url.Parse(downloadURL)
+	if err != nil {
+		return downloadURL
+	}
+	q := u.Query()
+	if !q.Has("download") {
+		return downloadURL
+	}
+	q.Del("download")
+	u.RawQuery = q.Encode()
+	return u.String()
+}
+
 func contentProbeURL(downloadURL string) string {
 	if i := strings.IndexByte(downloadURL, '?'); i >= 0 {
 		return downloadURL[:i] + "~cp" + downloadURL[i:]
@@ -532,46 +469,12 @@ func contentProbeURL(downloadURL string) string {
 	return downloadURL + "~cp"
 }
 
-func sessionBaseURL(streamURL string) (string, error) {
-	u, err := url.Parse(streamURL)
-	if err != nil {
-		return "", errors.Wrap(err, "failed to parse stream URL")
-	}
-	idx := strings.Index(u.Path, "~hls/")
-	if idx < 0 {
-		return "", errors.New("stream URL does not contain ~hls/ suffix")
-	}
-	u.Path = u.Path[:idx] + "~hls"
-	return u.String(), nil
-}
-
-func sessionHLSURL(baseURL string, sessionID string) (string, error) {
-	u, err := url.Parse(baseURL)
-	if err != nil {
-		return "", errors.Wrap(err, "failed to parse base URL")
-	}
-	u.Path += "/session/" + sessionID + "/index.m3u8"
-	return u.String(), nil
-}
-
-func sessionSeekURL(baseURL string, sessionID string) (string, error) {
-	u, err := url.Parse(baseURL)
-	if err != nil {
-		return "", errors.Wrap(err, "failed to parse base URL")
-	}
-	u.Path += "/session/" + sessionID + "/seek"
-	return u.String(), nil
-}
-
 func (s *ActionScript) streamContent(ctx context.Context, j *job.Job, c *web.Context, resourceID string, itemID string, template string, settings *models.StreamSettings, vsud *models.VideoStreamUserData, dsd *embed.DomainSettingsData) (err error) {
 	sc := &StreamContent{
-		Settings:       settings,
-		ExternalData:   &models.ExternalData{},
-		DomainSettings: dsd,
-		StatusAnswered: s.forceSlow,
-		// Here, not with the render's other fields: the status marks read
-		// it (setStatusMarks), and a passthrough's are made again before
-		// those fields are set.
+		Settings:            settings,
+		ExternalData:        &models.ExternalData{},
+		DomainSettings:      dsd,
+		StatusAnswered:      s.forceSlow,
 		VideoStreamUserData: vsud,
 	}
 	// Dev-only short-circuit: render the slow_download / no_peers error
@@ -744,11 +647,6 @@ func (s *ActionScript) streamContent(ctx context.Context, j *job.Job, c *web.Con
 	}
 	seMeta := exportMeta(se)
 	noteCache(s.cacheIndex, resourceID, exportResponse.Source, seMeta.Cache)
-	// Whether the file goes to the transcoder, and its stream URL: rest-api's
-	// word by extension, until the probe says an MP4's audio does not play
-	// as nginx-vod serves it (vod_route.go).
-	transcode, streamURL := seMeta.Transcode, se.URL
-
 	var downloadSpeed float64
 	var quickElapsed time.Duration
 	fileSize := int(exportResponse.Source.Size)
@@ -817,34 +715,15 @@ func (s *ActionScript) streamContent(ctx context.Context, j *job.Job, c *web.Con
 			}
 		}
 	}
-	if probeErr != nil && seMeta.Transcode {
-		return errors.Wrap(probeErr, "failed to get probe data")
-	}
-	// An MP4 nginx-vod would serve and the browser cannot play goes to the
-	// transcoder (vod_route.go) -- decided without a probe too: a restart
-	// after the browser refused nginx-vod's stream must not land back on it
-	// because the probe failed (the transcoder probes for itself).
-	if !transcode && vsud != nil && exportResponse.Source.MediaFormat == ra.Video {
-		var probed *api.MediaProbe
-		if probeErr == nil {
-			probed = mp
-		}
-		if why := vodReroute(probed, vsud.DecodeRequest); why != "" {
-			if u, uerr := transcodeURLFromVOD(streamURL); uerr == nil {
-				transcode, streamURL = true, u
-				metrics.VODReroute(why)
-				log.WithFields(log.Fields{"reason": why, "decode": vsud.DecodeRequest.Decode}).Info("stream: MP4 sent to the transcoder instead of nginx-vod")
-			} else {
-				log.WithError(uerr).WithField("reason", why).Warn("stream: MP4 kept on nginx-vod, no transcoder URL for it")
-			}
-		}
-	}
+	// A failed probe is not fatal: the player opens the file itself and
+	// reports what it cannot play. The page goes out without the probe's
+	// extras (duration hint, credits, embedded track list, the cap marks).
 	if probeErr != nil {
 		log.WithError(probeErr).Warn("failed to get content probe")
 	} else {
 		sc.MediaProbe = mp
 		sc.CreditsAt = creditsFromChapters(mp)
-		s.setStatusMarks(sc, c, mp, transcode)
+		s.setStatusMarks(sc, c, mp)
 		log.Infof("got media probe %+v", mp)
 	}
 	j.Done()
@@ -860,10 +739,8 @@ func (s *ActionScript) streamContent(ctx context.Context, j *job.Job, c *web.Con
 	// BT-slow path: when probe is needed (non-cached), we compare measured
 	// download speed against required bitrate. Even under grace mode this is
 	// kept — grace rate won't help if the user's own internet is the bottleneck.
-	// Two rates: the swarm is held against the file's own (fileRate,
-	// getVideoBitrate -- the seeder fetches every track), the plan's cap
-	// against what the player pulls (streamRate, capGateBitrate -- what thp
-	// caps, the rate the transfer status's "…and this file needs N" states).
+	// One rate for both: the player pulls the file itself, every track of
+	// it, and the seeder fetches all of it too (getVideoBitrate).
 	//
 	// Cap-modal path (cached content + plan cap below bitrate): kept under
 	// flag-off, skipped under graceMode. Under grace, THP delivers the first
@@ -874,18 +751,16 @@ func (s *ActionScript) streamContent(ctx context.Context, j *job.Job, c *web.Con
 	// opted into slow playback.
 	if sc.MediaProbe != nil {
 		fileRate := getVideoBitrate(sc.MediaProbe)
-		// Falls back to fileRate, so it is known whenever fileRate is.
-		streamRate := capGateBitrate(sc.MediaProbe, transcode, vsud)
-		if streamRate > 0 {
+		if fileRate > 0 {
 			if s.forceSlow {
 				j.Skip(s.t("job.checkingBandwidth"))
 			} else if effectiveCache && !graceMode {
 				j.InProgress(s.t("job.checkingBandwidth"))
-				if sdd, limited := checkCachedRateLimit(c, streamRate); limited {
+				if sdd, limited := checkCachedRateLimit(c, fileRate); limited {
 					return &SlowDownloadError{Data: sdd}
 				}
 				j.Done()
-			} else if !effectiveCache && downloadSpeed > 0 && fileRate > 0 {
+			} else if !effectiveCache && downloadSpeed > 0 {
 				// The quick warm-up gave a lower bound. A swarm that clears
 				// the bitrate even on that plays at once -- that is the
 				// whole saving. One that does not is either slow or merely
@@ -915,7 +790,7 @@ func (s *ActionScript) streamContent(ctx context.Context, j *job.Job, c *web.Con
 						// swarm speed to judge, only the plan cap -- the
 						// cached branch above, arrived at late.
 						if !graceMode {
-							if sdd, limited := checkCachedRateLimit(c, streamRate); limited {
+							if sdd, limited := checkCachedRateLimit(c, fileRate); limited {
 								return &SlowDownloadError{Data: sdd}
 							}
 						}
@@ -943,24 +818,17 @@ func (s *ActionScript) streamContent(ctx context.Context, j *job.Job, c *web.Con
 		}
 	}
 
-	// Step 4: Session transcoder (after bandwidth check)
-	if transcode && (exportResponse.Source.MediaFormat == ra.Video || exportResponse.Source.MediaFormat == ra.Audio) {
-		result, serr := s.bufferSessionHLS(ctx, j, streamURL, 30*time.Second, vsud.DecodeRequest)
-		if serr != nil {
-			return errors.Wrap(serr, "failed to buffer session HLS")
+	// Step 4: the player's source. movi-player demuxes and decodes the file
+	// in the browser, so it gets the file itself -- the download URL, with
+	// its token and Range support -- and nothing is transcoded.
+	if exportResponse.Source.MediaFormat == ra.Video || exportResponse.Source.MediaFormat == ra.Audio {
+		if downloadURL == "" {
+			return errors.New("resource has no download export")
 		}
-		s.applySessionRoute(sc, c, result)
-		sc.ExportTag.Sources = []ra.ExportSource{{
-			Src:  result.HLSURL,
-			Type: "application/vnd.apple.mpegurl",
-		}}
-		sc.SessionSeekURL = result.SeekURL
-		if base, err := sessionBaseURL(streamURL); err == nil {
-			if u, perr := url.Parse(base); perr == nil {
-				u.Path += "/session/" + result.Session.ID
-				sc.SubtitleOpts.HLSSessionBase = u.String()
-			}
+		if sc.ExportTag == nil {
+			sc.ExportTag = &ra.ExportTag{}
 		}
+		sc.ExportTag.Sources = []ra.ExportSource{{Src: playbackURL(downloadURL)}}
 	}
 	// What plays after this file (next_item.go). Not for the embed: there is
 	// no file list there to move through.
@@ -1688,23 +1556,13 @@ type ActionScript struct {
 
 // setStatusMarks puts on sc what the transfer status needs to know of the
 // probed file against the viewer's cap (StatusStallSub, StatusFitsCap,
-// StatusOverCap), which the player element carries to the page. The rate
-// compared is what the player pulls (playedBitrate), not the file's own:
-// the audio as the start's declaration has the transcoder make it, of the
-// track the player starts on (sc.VideoStreamUserData).
-func (s *ActionScript) setStatusMarks(sc *StreamContent, c *web.Context, mp *api.MediaProbe, transcoded bool) {
-	s.setRoutedStatusMarks(sc, c, mp, transcoded, false)
-}
-
-// setRoutedStatusMarks is setStatusMarks once the session's route is known:
-// videoCopied for a route that hands the browser the source's video as it
-// is (playedBitrateRouted).
-func (s *ActionScript) setRoutedStatusMarks(sc *StreamContent, c *web.Context, mp *api.MediaProbe, transcoded bool, videoCopied bool) {
-	bps, ceiling := playedBitrateRouted(mp, transcoded, videoCopied, sc.VideoStreamUserData)
+// StatusOverCap), which the player element carries to the page. The player
+// pulls the file itself, every track of it, so the rate compared is the
+// file's own (getVideoBitrate).
+func (s *ActionScript) setStatusMarks(sc *StreamContent, c *web.Context, mp *api.MediaProbe) {
+	bps := getVideoBitrate(mp)
 	sc.StatusStallSub = s.statusStallSub(c, bps)
-	// What it pulls not known, a bound on it can still say it fits; never
-	// that it is over, nor what it needs.
-	sc.StatusFitsCap = statusFitsCap(c, bps) || bps == 0 && statusFitsCap(c, ceiling)
+	sc.StatusFitsCap = statusFitsCap(c, bps)
 	sc.StatusOverCap = statusOverCap(c, bps)
 }
 
@@ -1879,11 +1737,6 @@ var actionClock = time.Now
 // resubmit (SlowDownloadData.Purge).
 func Action(tb template.Builder[*web.Context], api *api.Api, i18nSvc *i18n.Service, userSubtitles *us.Service, thumbnailSvc *thumb.Service, enricher *enrich.Enricher, prefs *streamprefs.Service, cacheIndex CacheIndexer, c *web.Context, resourceID string, itemID string, action string, settings *models.StreamSettings, dsd *embed.DomainSettingsData, vsud *models.VideoStreamUserData, warmup WarmupSettings, grace GraceSettings, forceSlow bool, purge bool, debug string, archiveFormat string, selectedPaths []string) (r job.Runnable, id string) {
 	vsudID := vsud.AudioID + "/" + vsud.SubtitleID + "/" + vsud.PreferredLang + "/" + fmt.Sprintf("%+v", vsud.AcceptLangTags) + "/" + vsud.Carry.Key()
-	// A render for one declaration must not be served to another: the
-	// transcoder may give the browser that declared HEVC the source as it
-	// is, which a browser without the decoder cannot show. Appended only
-	// when there is one, so a start that declares nothing keeps its id.
-	vsudID += vsud.DecodeRequest.Key()
 	settingsID := fmt.Sprintf("%+v", settings)
 	now := actionClock().UTC()
 	// Cache key includes the authenticated user's id so two users on the

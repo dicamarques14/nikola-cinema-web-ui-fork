@@ -6,11 +6,9 @@ import (
 	"net/url"
 
 	"github.com/pkg/errors"
-	log "github.com/sirupsen/logrus"
 	"github.com/webtor-io/web-ui/models"
 	"github.com/webtor-io/web-ui/services/api"
 	"github.com/webtor-io/web-ui/services/claims"
-	"github.com/webtor-io/web-ui/services/metrics"
 	"github.com/webtor-io/web-ui/services/web"
 
 	"github.com/gin-gonic/gin"
@@ -21,9 +19,6 @@ import (
 type PostArgs struct {
 	ID            string
 	EmbedSettings *models.EmbedSettings
-	// Decode is the embed page's HEVC passthrough declaration and, on a
-	// restart after a failed passthrough, why (models.DecodeRequest).
-	Decode models.DecodeRequest
 	// Purge: start the job again rather than replay the cached one. The
 	// player's own restart after its transcoder session is gone sends it
 	// (lib/player/stream-restart.js): the embed's render is cached for the
@@ -50,7 +45,6 @@ func (s *Handler) bindPostArgs(c *gin.Context) (*PostArgs, error) {
 	return &PostArgs{
 		ID:            id,
 		EmbedSettings: &settings,
-		Decode:        models.ParseDecodeRequest(c.PostForm("decode"), c.PostForm("decode-fallback"), c.PostForm("decode-class")),
 		Purge:         c.PostForm("purge") == "true",
 	}, nil
 
@@ -94,18 +88,7 @@ func (s *Handler) post(c *gin.Context) {
 		_ = c.AbortWithError(http.StatusInternalServerError, errors.Wrap(err, "failed to set embed claims"))
 		return
 	}
-	if args.Decode.FallbackReason != "" {
-		// A restart after a passthrough failed in this embed
-		// (lib/player/passthrough.js restartEmbed): counted and logged as
-		// on the site (handlers/action notePassthroughFallback).
-		metrics.PassthroughFallback(args.Decode.FallbackReason, args.Decode.FallbackClass)
-		log.WithFields(log.Fields{
-			"reason": args.Decode.FallbackReason,
-			"class":  args.Decode.FallbackClass,
-			"embed":  domain,
-		}).Info("passthrough fallback")
-	}
-	embedJob, err := s.jobs.Embed(web.NewContext(c), s.cl, args.EmbedSettings, dsd, args.Decode, args.Purge)
+	embedJob, err := s.jobs.Embed(web.NewContext(c), s.cl, args.EmbedSettings, dsd, args.Purge)
 	if err != nil {
 		tpl.HTML(http.StatusBadRequest, web.NewContext(c).WithData(pd).WithErr(err))
 		return

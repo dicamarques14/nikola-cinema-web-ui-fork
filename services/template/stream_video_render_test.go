@@ -116,7 +116,6 @@ func TestStreamVideoRenders(t *testing.T) {
 		Settings:             &models.StreamSettings{},
 		ExternalData:         &models.ExternalData{},
 		DomainSettings:       nil,
-		TranscoderSession:    nil,
 		SubtitleOpts:         models.SubtitleOpts{},
 	}
 
@@ -184,12 +183,9 @@ func TestStreamVideoRenders(t *testing.T) {
 		t.Error(`SubtitlesNotReady must reach the picker as data-subtitles-not-ready="true"`)
 	}
 
-	// data-video-codecs carries the source's video codecs to the
-	// codec-support event (lib/player/codec-support.js), which is how that
-	// event tells the viewers the transcoder re-encodes for (HEVC, AV1) from
-	// the rest. Absent without a probe -- "unknown", not "no video" -- and
-	// every video stream in order when there is one, a cover picture
-	// included (the client skips it).
+	// data-video-codecs is gone with the transcoder: it told the
+	// codec-support event which viewers the transcoder re-encoded for. The
+	// player now decodes the file itself, so it never renders, probe or not.
 	if strings.Contains(html, "data-video-codecs") {
 		t.Error("data-video-codecs must not render without a media probe")
 	}
@@ -211,10 +207,8 @@ func TestStreamVideoRenders(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("failed to render stream_video.html: %v", err)
 	}
-	if out := probed.String(); !strings.Contains(out, `data-video-codecs="hevc mjpeg "`) {
-		tag := out[strings.Index(out, "<video"):]
-		t.Errorf(`the probe's video streams must reach the player as data-video-codecs="hevc mjpeg ", got %q`,
-			tag[:strings.Index(tag, ">")+1])
+	if out := probed.String(); strings.Contains(out, "data-video-codecs") {
+		t.Error("data-video-codecs rendered with a media probe")
 	}
 
 	// The stream job's word on the file against the viewer's cap reaches
@@ -255,58 +249,13 @@ func TestStreamVideoRenders(t *testing.T) {
 		t.Errorf("force-slow run, not marked answered: %s", tag)
 	}
 
-	// The session's route reaches the player only where it is known: no
-	// session, or a transcoder that predates routes, leaves the tag as it
-	// was; the passthrough-only attributes and the declaration only where
-	// they are set.
-	routeAttrs := []string{"data-video-route", "data-route-reason", "data-video-class", "data-frag-load-ms", "data-decode", "data-item-id", "data-audio-class"}
-	noneOf := func(tag string, names ...string) {
-		t.Helper()
-		for _, n := range names {
-			if strings.Contains(tag, n) {
-				t.Errorf("%s rendered where it is not known: %s", n, tag)
-			}
-		}
-	}
-	noneOf(player(data), routeAttrs...)
-	data.TranscoderSession = &api.TranscoderSession{ID: "s1", Duration: 10}
-	noneOf(player(data), routeAttrs...)
-	data.TranscoderSession = &api.TranscoderSession{ID: "s1", Duration: 10, VideoRoute: "reencode", RouteReason: "no_declaration"}
+	// Raw-file playback (movi-player): nothing of a transcoder session or
+	// a decode declaration reaches the player, whatever the job knew.
 	tag := player(data)
-	if !strings.Contains(tag, ` data-video-route="reencode" data-route-reason="no_declaration"`) {
-		t.Errorf("old route not marked: %s", tag)
-	}
-	noneOf(tag, "data-video-class", "data-frag-load-ms", "data-decode", "data-item-id", "data-audio-class")
-	// A start that declared video only on the old route: its declaration,
-	// no restart of the player's own.
-	data.VideoStreamUserData.Decode = "hevc8,hdr-pq"
-	tag = player(data)
-	if !strings.Contains(tag, ` data-decode="hevc8,hdr-pq"`) {
-		t.Errorf("old route, video declared: no declaration: %s", tag)
-	}
-	noneOf(tag, "data-video-class", "data-frag-load-ms", "data-item-id", "data-audio-class")
-	// Multichannel audio declared on the old route: the audio the
-	// transcoder made, and the file, for the player's own restart
-	// (lib/player/passthrough.js createAudioGuard).
-	data.VideoStreamUserData.Decode = "hevc8,hdr-pq,aac51"
-	data.AudioClass = "aac51"
-	tag = player(data)
-	for _, want := range []string{` data-audio-class="aac51"`, ` data-item-id="item"`, ` data-decode="hevc8,hdr-pq,aac51"`} {
-		if !strings.Contains(tag, want) {
-			t.Errorf("old route, audio declared: %s missing: %s", want, tag)
-		}
-	}
-	noneOf(tag, "data-video-class", "data-frag-load-ms")
-	data.AudioClass = ""
-	data.VideoStreamUserData.Decode = ""
-	data.TranscoderSession = &api.TranscoderSession{ID: "s1", Duration: 10, VideoRoute: "passthrough", RouteReason: "ok"}
-	data.VideoClass, data.FragLoadMs = "hevc10-2160", 160000
-	data.VideoStreamUserData.Decode = "hevc8,hevc10,hevc8-2160,hevc10-2160,hdr-pq"
-	tag = player(data)
-	for _, want := range []string{` data-video-route="passthrough"`, ` data-route-reason="ok"`, ` data-video-class="hevc10-2160"`,
-		` data-frag-load-ms="160000"`, ` data-decode="hevc8,hevc10,hevc8-2160,hevc10-2160,hdr-pq"`, ` data-item-id="item"`} {
-		if !strings.Contains(tag, want) {
-			t.Errorf("passthrough: %s missing: %s", want, tag)
+	for _, n := range []string{"data-video-route", "data-route-reason", "data-video-class", "data-frag-load-ms",
+		"data-decode", "data-item-id", "data-audio-class", "data-session-id", "data-session-seek-url", "data-video-codecs"} {
+		if strings.Contains(tag, n) {
+			t.Errorf("%s rendered: %s", n, tag)
 		}
 	}
 }
@@ -400,7 +349,6 @@ func TestStreamVideoRendersTranslateBadgesAndCTA(t *testing.T) {
 		Settings:             &models.StreamSettings{},
 		ExternalData:         &models.ExternalData{},
 		DomainSettings:       nil,
-		TranscoderSession:    nil,
 		SubtitleOpts:         models.SubtitleOpts{PreferredLang: "pt", Translate: true, Paid: false},
 	}
 
@@ -727,7 +675,6 @@ func TestStreamVideoRendersMySubtitlesTab(t *testing.T) {
 		Settings:             &models.StreamSettings{},
 		ExternalData:         &models.ExternalData{},
 		DomainSettings:       nil,
-		TranscoderSession:    nil,
 		SubtitleOpts:         models.SubtitleOpts{PreferredLang: "pt", Translate: true, Paid: true},
 	}
 

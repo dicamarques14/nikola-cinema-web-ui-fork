@@ -3,6 +3,7 @@ package scripts
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -14,11 +15,28 @@ import (
 
 	log "github.com/sirupsen/logrus"
 	logtest "github.com/sirupsen/logrus/hooks/test"
+	"github.com/urfave/cli"
 
+	"github.com/webtor-io/web-ui/services/api"
 	"github.com/webtor-io/web-ui/services/i18n"
 	"github.com/webtor-io/web-ui/services/job"
 	"github.com/webtor-io/web-ui/services/web"
 )
+
+// directAPI is an api.Api that sends Download straight to the URL it is
+// given. The flag is set explicitly: flags read their env vars on Apply, and
+// a shell with USE_INTERNAL_TORRENT_HTTP_PROXY set would rewrite the host.
+func directAPI(t *testing.T) *api.Api {
+	t.Helper()
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	for _, f := range api.RegisterFlags(nil) {
+		f.Apply(fs)
+	}
+	if err := fs.Parse([]string{"--use-internal-torrent-http-proxy=false"}); err != nil {
+		t.Fatal(err)
+	}
+	return api.New(cli.NewContext(cli.NewApp(), fs, nil), http.DefaultClient)
+}
 
 // warmI18n is one bundle for the parallel tests below: i18n.New sets a
 // package global.
