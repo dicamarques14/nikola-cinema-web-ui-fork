@@ -45,3 +45,4 @@ chart
 
 # SDD scratch workspace
 .superpowers/
+.omc/

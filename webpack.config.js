@@ -54,6 +54,15 @@ module.exports = async (env, options) => {
         new MiniCssExtractPlugin({
             filename: '[name].css',
         }),
+        // movi-player's engine. Its slim build resolves the file from
+        // import.meta.url, which webpack rewrites to the build machine's
+        // file:// path, so the player is told where it lives instead
+        // (the `wasmurl` attribute, /assets/movi.wasm).
+        new CopyPlugin({
+            patterns: [
+                { from: 'node_modules/movi-player/dist/movi.wasm', to: 'movi.wasm' },
+            ],
+        }),
     ];
     for (const t of themes) {
         plugins.push(new FaviconsWebpackPlugin({
@@ -105,6 +114,14 @@ module.exports = async (env, options) => {
             },
             static: './assets/dist',
             allowedHosts: 'all',
+            // Dev-only host page for assets/src/js/dev/movi-spike.js, so the
+            // spike runs without the Go backend (everything else is proxied to it).
+            setupMiddlewares: (middlewares, devServer) => {
+                devServer.app.get('/movi-spike', (req, res) => {
+                    res.type('html').send('<!doctype html><meta charset="utf-8"><body style="margin:0;background:#000"><script src="/assets/dev/movi-spike.js"></script>');
+                });
+                return middlewares;
+            },
             devMiddleware: {
                 publicPath: '/assets',
                 index: false,
