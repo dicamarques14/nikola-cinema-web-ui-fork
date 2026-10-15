@@ -401,6 +401,7 @@
     "library.files": "файлов",
     "library.addToLibrary": "В библиотеку",
     "library.removeFromLibrary": "Убрать из библиотеки",
+    "library.removeFromLibraryConfirm": "Убрать из библиотеки? Запись исчезнет из списка.",
     "library.filterAll": "Все",
     "library.filterUnwatched": "Не просмотрено",
     "library.filterWatched": "Просмотрено",

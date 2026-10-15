@@ -401,6 +401,7 @@
     "library.files": "soubory",
     "library.addToLibrary": "Přidat do knihovny",
     "library.removeFromLibrary": "Odebrat z knihovny",
+    "library.removeFromLibraryConfirm": "Odebrat z knihovny? Položka již nebude v seznamu.",
     "library.filterAll": "Vše",
     "library.filterUnwatched": "Nezhlédnuté",
     "library.filterWatched": "Zhlédnuté",

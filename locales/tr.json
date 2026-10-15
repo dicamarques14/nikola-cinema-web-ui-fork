@@ -401,6 +401,7 @@
     "library.files": "dosya",
     "library.addToLibrary": "Kütüphaneye ekle",
     "library.removeFromLibrary": "Kütüphaneden kaldır",
+    "library.removeFromLibraryConfirm": "Kütüphaneden kaldırılsın mı? Artık listelenmeyecek.",
     "library.filterAll": "Tümü",
     "library.filterUnwatched": "İzlenmedi",
     "library.filterWatched": "İzlendi",

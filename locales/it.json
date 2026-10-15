@@ -401,6 +401,7 @@
     "library.files": "file",
     "library.addToLibrary": "Aggiungi alla libreria",
     "library.removeFromLibrary": "Rimuovi dalla libreria",
+    "library.removeFromLibraryConfirm": "Rimuovere dalla libreria? Non sarà più elencato.",
     "library.filterAll": "Tutto",
     "library.filterUnwatched": "Non visti",
     "library.filterWatched": "Visti",

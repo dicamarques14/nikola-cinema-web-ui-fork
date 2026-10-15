@@ -401,6 +401,7 @@
     "library.files": "bestanden",
     "library.addToLibrary": "Toevoegen aan bibliotheek",
     "library.removeFromLibrary": "Verwijderen uit bibliotheek",
+    "library.removeFromLibraryConfirm": "Verwijderen uit de bibliotheek? Het item wordt niet meer getoond.",
     "library.filterAll": "Alles",
     "library.filterUnwatched": "Niet bekeken",
     "library.filterWatched": "Bekeken",
