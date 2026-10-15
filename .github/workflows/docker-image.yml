@@ -5,6 +5,9 @@ on:
   push:
     branches:
       - 'main'
+      # The movi-player fork publishes its branch as ghcr.io/<owner>/<repo>:movi-player
+      # (docker/metadata-action's branch tag), which the self-hosted image pins.
+      - 'movi-player'
     tags:
       - 'v*'
 
