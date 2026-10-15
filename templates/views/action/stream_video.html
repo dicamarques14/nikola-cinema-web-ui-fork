@@ -119,7 +119,7 @@
                     {{ range getAudioTracks .VideoStreamUserData .MediaProbe }}
                     {{ $d := langDisplay .SrcLang }}{{ $sfx := audioSuffix . }}
                     <button type="button" role="radio" aria-checked="{{ if .Default }}true{{ else }}false{{ end }}"
-                            data-id="{{ .ID }}" data-mp-id="{{ .MPID }}" data-srclang="{{ .SrcLang }}" data-provider="{{ .Provider }}" data-label="{{ .Label }}"
+                            data-id="{{ .ID }}" data-mp-id="{{ .MPID }}"{{ if eq .Provider "MediaProbe" }} data-stream="{{ .Stream }}"{{ end }} data-srclang="{{ .SrcLang }}" data-provider="{{ .Provider }}" data-label="{{ .Label }}"
                             data-lang="{{ $d.Lang }}" data-lang-name="{{ $d.Name }}" data-lang-flag="{{ $d.Flag }}"
                             {{ if .Default }}data-default="true" {{ end }}
                             class="audio track-chip{{ if .Default }} track-chip-active{{ end }}">
@@ -252,7 +252,7 @@
                          too — the switch, not this radiogroup, is what says
                          subtitles are off. */}}
                     <button type="button" role="radio" aria-checked="{{ if $marked }}true{{ else }}false{{ end }}"
-                            data-id="{{ .ID }}" data-mp-id="{{ .MPID }}" data-srclang="{{ .SrcLang }}" data-provider="{{ .Provider }}" data-src="{{ .Src }}" data-label="{{ .Label }}" data-kind="{{ .Kind }}" data-badge="{{ .Badge }}" data-source="{{ .Source }}" data-rank="{{ .Rank }}"
+                            data-id="{{ .ID }}" data-mp-id="{{ .MPID }}"{{ if eq .Provider "MediaProbe" }} data-stream="{{ .Stream }}"{{ end }} data-srclang="{{ .SrcLang }}" data-provider="{{ .Provider }}" data-src="{{ .Src }}" data-label="{{ .Label }}" data-kind="{{ .Kind }}" data-badge="{{ .Badge }}" data-source="{{ .Source }}" data-rank="{{ .Rank }}"
                             data-lang="{{ $d.Lang }}" data-lang-name="{{ $d.Name }}" data-lang-flag="{{ $d.Flag }}"
                             {{ if .SourceBadge }}data-source-badge="{{ .SourceBadge }}" {{ end }}{{ if .LangGuessed }}data-lang-guessed="true" {{ end }}{{ if .Forced }}data-forced="true" {{ end }}{{ if .Locked }}data-locked="true" {{ end }}{{ if or .Locked $off }}aria-disabled="true" {{ end }}{{ if .Default }}data-default="true" {{ end }}{{ if .Saved }}data-saved="true" {{ end }}{{ if .Suggested }}data-suggested="true" {{ end }}{{ if .Offered }}data-offered="true" {{ end }}{{ if .Upsell }}data-upsell="true" {{ end }}{{ if or .Offered .Upsell }}data-offer-label="{{ tp $.Lang "action.stream.translate.action" "Language" $dl.Localized }}" {{ end }}
                             {{ if ne $d.Lang $row.Expanded }}hidden{{ end }}

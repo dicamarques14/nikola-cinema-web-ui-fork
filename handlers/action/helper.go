@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"regexp"
 	"strconv"
+	"strings"
 
 	"github.com/pkg/errors"
 	"github.com/webtor-io/web-ui/models"
@@ -15,8 +16,13 @@ import (
 )
 
 type ListItem struct {
-	ID       string
-	MPID     string
+	ID   string
+	MPID string
+	// Stream is, for an embedded (MediaProbe) track, the file's own stream
+	// index as ffprobe numbers it. The player addresses embedded audio and
+	// subtitles by it (movi-player's track ids are the demuxer's stream
+	// indexes), rendered as data-stream. Meaningless for any other provider.
+	Stream   int
 	Label    string
 	Default  bool
 	SrcLang  string
@@ -209,9 +215,6 @@ func (s *Helper) HasControls(settings *models.StreamSettings) bool {
 	return controls
 }
 
-// jobs/scripts startAudio is a copy of this default rule (that package
-// cannot import this one); TestStartAudio_IsThePickersDefault fails when
-// they part.
 func (s *Helper) GetAudioTracks(ud *models.VideoStreamUserData, mp *api.MediaProbe) []ListItem {
 	var res []ListItem
 	if mp == nil {
@@ -238,6 +241,7 @@ func (s *Helper) GetAudioTracks(ud *models.VideoStreamUserData, mp *api.MediaPro
 				res = append(res, ListItem{
 					ID:       "mp-" + strconv.Itoa(i),
 					MPID:     strconv.Itoa(i),
+					Stream:   stream.Index,
 					Label:    title,
 					SrcLang:  stream.Tags.Language,
 					Provider: "MediaProbe",
@@ -382,11 +386,13 @@ func (s *Helper) canonizeSrcLangs(lis []ListItem) []ListItem {
 	return lis
 }
 
-// Bitmap subtitle codecs cannot be rendered by the browser (they need
-// OCR) and cannot be translated. hdmv_pgs is also dropped by
-// content-transcoder from the HLS subtitle group, so it must not
-// consume an MPID; the other bitmap codecs stay in the group and keep
-// their slot even though we hide them.
+// Bitmap subtitle codecs cannot be translated (they need OCR), but the
+// player draws them (movi-player renders PGS, DVD and DVB bitmaps), so
+// they are offered like any embedded track and never feed a translation:
+// they carry no Src. The ids of the others ("mp-N", N counting what the
+// transcoder's HLS subtitle group counted) are kept as they were, since a
+// saved choice and a carried one name a track by it; hdmv_pgs was never in
+// that group, so it takes no number and is named by its stream index.
 var bitmapSubtitleCodecs = map[string]bool{
 	"hdmv_pgs_subtitle": true,
 	"dvd_subtitle":      true,
@@ -440,21 +446,19 @@ var textSubtitleCodecs = map[string]bool{
 }
 
 // embeddedSubtitleVisible reports whether an embedded subtitle stream
-// is offered in the picker, whether it occupies an index in the
-// transcoder's HLS subtitle group (see content-transcoder
-// services/hls.go: everything but hdmv_pgs is included), and whether
-// it is a "forced" (signs-only) track by title until content-prober
-// exposes ffprobe's disposition flags. Only codecs the transcoder
-// converts are visible (textSubtitleCodecs); the slot does not depend
-// on that.
+// is offered in the picker, whether it takes a number among the ids
+// ("mp-N") the picker has always given (the slot the transcoder's HLS
+// subtitle group gave it: everything but hdmv_pgs, see content-transcoder
+// services/hls.go), and whether it is a "forced" (signs-only) track by
+// title until content-prober exposes ffprobe's disposition flags. Visible
+// are the codecs the player can draw: text (textSubtitleCodecs) and bitmap
+// (bitmapSubtitleCodecs); the slot does not depend on that.
 func embeddedSubtitleVisible(codecName, title string) (visible bool, countsForHLS bool, forced bool) {
-	if codecName == "hdmv_pgs_subtitle" {
-		return false, false, false
+	counts := codecName != "hdmv_pgs_subtitle"
+	if !bitmapSubtitleCodecs[codecName] && !textSubtitleCodecs[codecName] {
+		return false, counts, false
 	}
-	if bitmapSubtitleCodecs[codecName] || !textSubtitleCodecs[codecName] {
-		return false, true, false
-	}
-	return true, true, forcedTitleRe.MatchString(title)
+	return true, counts, forcedTitleRe.MatchString(title)
 }
 
 // sidecarForced reports whether a side-loaded (ExportTag) track is a
@@ -1137,11 +1141,14 @@ func (s *Helper) GetSubtitles(ud *models.VideoStreamUserData, mp *api.MediaProbe
 				continue
 			}
 			visible, counts, forced := embeddedSubtitleVisible(stream.CodecName, stream.Tags.Title)
-			if !counts {
-				continue
-			}
 			if visible {
+				id, mpid := "mp-"+strconv.Itoa(i), strconv.Itoa(i)
 				label := fmt.Sprintf("Subtitle #%v", i+1)
+				if !counts {
+					// Not in the numbering (hdmv_pgs): named by its stream.
+					id, mpid = "mp-b"+strconv.Itoa(stream.Index), ""
+					label = "Subtitle (" + strings.ToUpper(strings.TrimSuffix(strings.TrimPrefix(stream.CodecName, "hdmv_"), "_subtitle")) + ")"
+				}
 				if stream.Tags.Title != "" {
 					label = stream.Tags.Title
 				}
@@ -1152,8 +1159,9 @@ func (s *Helper) GetSubtitles(ud *models.VideoStreamUserData, mp *api.MediaProbe
 				// No Src: the player demuxes embedded tracks from the
 				// file itself (movi-player), the chip only names them.
 				res = append(res, ListItem{
-					ID:       "mp-" + strconv.Itoa(i),
-					MPID:     strconv.Itoa(i),
+					ID:       id,
+					MPID:     mpid,
+					Stream:   stream.Index,
 					Label:    label,
 					SrcLang:  srcLang,
 					Kind:     "subtitles",
@@ -1164,7 +1172,9 @@ func (s *Helper) GetSubtitles(ud *models.VideoStreamUserData, mp *api.MediaProbe
 					LangGuessed: stream.Tags.Language == "",
 				})
 			}
-			i++
+			if counts {
+				i++
+			}
 		}
 	}
 	// tag and ext come straight off the export response

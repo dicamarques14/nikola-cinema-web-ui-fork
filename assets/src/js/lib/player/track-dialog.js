@@ -1,15 +1,14 @@
 // The subtitles/audio dialog, outside the Preact tree: the server renders it,
-// and this module makes it work -- creating <track>s on demand, moving the
-// active marks, persisting the viewer's choices, the uploads panel, the
-// delegated listeners (wireTrackHandlers) and swapping in a freshly rendered
-// dialog when the preferred language changes (swapSubtitlesDialog).
+// and this module makes it work -- handing the viewer's pick to the player
+// (movi-tracks.js), moving the active marks, persisting the viewer's choices,
+// the uploads panel, the delegated listeners (wireTrackHandlers) and swapping
+// in a freshly rendered dialog when the preferred language changes
+// (swapSubtitlesDialog).
 //
 // Moved out of Player.jsx on 2026-09-19, unchanged: that file held the
 // player component AND this, 2900 lines of it, and the two only ever meet
 // through `hooks` (trackHooks) -- the component listens, this module calls.
 
-import { applySubtitleSelection, selectionFor } from './subtitle-apply.js';
-import { dropDeletedTracks } from './subtitle-track-reload.js';
 import { readTracks, selectEventData } from './subtitle-telemetry.js';
 import { withParam } from './subtitle-progress.js';
 import { wirePreferredLang } from './preferred-lang.js';
@@ -28,32 +27,28 @@ import {
     toggleLangOverflow,
 } from './track-picker.js';
 
-// Ensure a <track> with id=<trackID> exists inside <video>. The server
-// pre-wraps user-subtitle URLs through /ext/ with the correct auth
-// (subdomain/path/query baked in by torrent-http-proxy) and returns
-// them in data-src. For subs uploaded after the initial render, the
-// <video> has no matching <track> yet — create one on first click.
-// ensureTrackElement creates the <track> for a side-loaded subtitle the
-// first time it is selected. The server renders only the default track:
-// browsers fetch every <track> element on page load regardless of mode,
-// and 40+ OpenSubtitles tracks per page tripped the ingress per-IP rate
-// limit and OpenSubtitles' 5 req/s (a burst of 40 requests in one second
-// per viewer). Creating tracks lazily makes each selection one download.
-export function ensureTrackElement(video, trackID, wrappedSrc, label, srclang, kind) {
-    for (const t of video.querySelectorAll('track')) {
-        if (t.id === trackID) return true;
-    }
-    if (!wrappedSrc) return false;
-    const track = document.createElement('track');
-    track.id = trackID;
-    track.kind = kind || 'subtitles';
-    track.src = wrappedSrc;
-    track.label = label || 'Subtitle';
-    // HTML requires srclang on a subtitles track; 'und' when the upload
-    // declares no language. An empty attribute is not a valid tag.
-    track.srclang = srclang || 'und';
-    video.appendChild(track);
-    return true;
+// bridgeFor is the track bridge (movi-tracks.js) of the player in `container`,
+// hung on its element by Player.jsx; null before it is mounted or without a
+// player (a page with the picker and no player).
+export function bridgeFor(container) {
+    const el = container && container.querySelector ? container.querySelector('.player') : null;
+    return (el && el.__wtTracks) || null;
+}
+
+// selectionFrom reads what the bridge needs off a picker chip. A side-loaded
+// chip's `data-src` is already wrapped through /ext/ by the server with the
+// right auth (subdomain, path, query by torrent-http-proxy); an AI
+// translation's first request carries the viewer's position (firstTrackSrc).
+export function selectionFrom(video, target) {
+    const provider = target.getAttribute('data-provider') || '';
+    const src = target.getAttribute('data-src') || '';
+    return {
+        id: target.getAttribute('data-id') || '',
+        provider,
+        src: video ? firstTrackSrc(video, provider, src) : src,
+        label: target.getAttribute('data-label') || '',
+        stream: target.getAttribute('data-stream'),
+    };
 }
 
 // findSubtitleItem locates a list item by data-id without CSS.escape:
@@ -159,7 +154,7 @@ export function itemData(el) {
     };
 }
 
-// firstTrackSrc is the URL a side-loaded <track> is created with. For an AI
+// firstTrackSrc is the URL a side-loaded subtitle is first read from. For an AI
 // translation it carries the viewer's position (movie time), like every poll
 // does: this GET is the request that STARTS the job, and the service orders
 // its first batch by the position it has on record. Without one here it read
@@ -191,46 +186,15 @@ export function firstTrackSrc(video, provider, src) {
 // exactly "the viewer chose this" and a rule the player applied for them
 // never comes back as a choice the next rule has to respect.
 export function activateSubtitle(container, target, { persist = true } = {}) {
-    const provider = target.getAttribute('data-provider');
-    const id = target.getAttribute('data-id');
-    // Side-loaded tracks (OpenSubtitles, sidecar files, embed externals,
-    // user uploads) exist as <track> elements only once selected — see
-    // ensureTrackElement.
-    if (provider !== 'MediaProbe' && id && id !== 'none') {
-        const video = container.querySelector('video.player, audio.player');
-        if (video) {
-            // data-label only. A chip's text is decorated now — the origin
-            // code ("OS"), the property tag ("forced"), the source suffix
-            // ("· opensubtitles") — and that whole string used to land in
-            // <track label>, which is what the native iOS track menu
-            // shows. Every chip that reaches here is side-loaded and
-            // carries data-label; the "None" carrier, the one without it,
-            // is excluded by the id guard above. ensureTrackElement supplies
-            // its own last-resort name.
-            ensureTrackElement(
-                video,
-                id,
-                firstTrackSrc(video, provider, target.getAttribute('data-src') || ''),
-                target.getAttribute('data-label') || '',
-                target.getAttribute('data-srclang') || '',
-                target.getAttribute('data-kind') || 'subtitles',
-            );
-        }
-    }
     markTrack(container, target, 'subtitle', persist);
-    // Both halves of "what is on screen" — the hls.js selection and the
-    // element modes — are written by applySubtitleSelection and nowhere
-    // else, so a chip and the player cannot disagree about which of the two
-    // renderers is drawing. See subtitle-apply.js for why hls.js-managed
-    // tracks go to 'disabled' rather than 'hidden'.
-    //
-    // window.hlsPlayer is undefined until useHls creates the instance, and
-    // a mount-time activation (a translation saved in an earlier session
-    // coming back) routinely runs before that: then only the element modes
-    // land here, and initDefaultTracks applies the same selection to hls.js
-    // on the first canplay.
-    const player = container.querySelector('video.player, audio.player');
-    applySubtitleSelection(player, window.hlsPlayer || null, selectionFor(target));
+    // What is on screen is written by the bridge and nowhere else, so a chip
+    // and the player cannot disagree about which renderer is drawing: an
+    // embedded track by its stream, a side-loaded one fetched now (only now:
+    // one request per selection, never one per offered track), "None" off.
+    const bridge = bridgeFor(container);
+    if (!bridge) return;
+    const video = container.querySelector('.player');
+    bridge.showSubtitle(selectionFrom(video, target));
 }
 
 export function toggleDialog(id) {
@@ -273,39 +237,24 @@ export function setUploadMark(el, on) {
 }
 
 // syncUploadMarks re-derives the uploads' active marker from what is
-// actually playing. The <track default> in <video> drives playback
-// correctly on reload, but the uploads' chips are re-rendered by the
-// partial and never go through the click path, so they lose the marker;
-// this runs at wiring time and after every async swap.
+// actually playing. The uploads' chips are re-rendered by the partial and
+// never go through the click path, so they lose the marker; this runs at
+// wiring time and after every async swap.
 //
 // Module scope rather than a closure inside wireTrackHandlers: it is the
 // least-covered piece of this file (the stage checklist carried it as a
 // by-hand item), and a function the tests can call is one they can drive
 // through states a real player takes minutes to reach.
 export function syncUploadMarks(container, subtitlesModal) {
-    const video = container.querySelector('video.player');
-    if (!video) return;
+    const bridge = bridgeFor(container);
+    if (!bridge) return;
     const scope = subtitlesModal || container;
     const mine = Array.from(scope.querySelectorAll('.subtitle')).filter(isUpload);
     if (!mine.length) return;
-    let activeID = null;
-    for (const t of video.textTracks) {
-        if (t.mode === 'showing' && t.id) { activeID = t.id; break; }
-    }
-    if (!activeID) {
-        // The <track default> attribute answers "what is playing" only
-        // while nothing else claims it. An embedded (MediaProbe) track is
-        // driven by hls.js and has no <track> element at all, so "no
-        // showing textTrack" does not mean "nothing is playing" — and a
-        // stale default left on a side-loaded track would then hand the
-        // marker to an upload as well, leaving two chips with data-default
-        // and two check marks.
-        for (const el of scope.querySelectorAll('.subtitle[data-default="true"]')) {
-            if (!isUpload(el)) return;
-        }
-        const dt = video.querySelector('track[default]');
-        if (dt && dt.id) activeID = dt.id;
-    }
+    // What is playing is the bridge's answer: a side-loaded or generated
+    // track by its chip id; '' is an embedded track, subtitles off, or no
+    // pick yet, and none of those is an upload to mark.
+    const activeID = bridge.activeId();
     if (!activeID) return;
     const active = mine.find((el) => el.getAttribute('data-id') === activeID) || null;
     for (const el of mine) setUploadMark(el, el === active);
@@ -350,14 +299,14 @@ export function swapSubtitlesDialog(container, fresh, hooks = {}) {
     // told about.
     rebindAsync(live);
 
-    const video = container.querySelector('video.player, audio.player');
-    // <track>s of chips that are gone (the AI item of the old language).
+    const bridge = bridgeFor(container);
+    // Tracks of chips that are gone (the AI item of the old language).
     const chipIDs = [];
     for (const el of live.querySelectorAll('.subtitle')) {
         const cid = el.getAttribute('data-id');
         if (cid) chipIDs.push(cid);
     }
-    dropDeletedTracks(video, chipIDs);
+    if (bridge) bridge.dropMissing(chipIDs);
 
     const subtitle = live.querySelector('.subtitle[data-default="true"]');
     if (subtitle) {
@@ -365,9 +314,8 @@ export function swapSubtitlesDialog(container, fresh, hooks = {}) {
         if (hooks.onDialogSwapped) hooks.onDialogSwapped(subtitle);
     }
     const audio = live.querySelector('.audio[data-default="true"]');
-    if (audio && window.hlsPlayer && audio.getAttribute('data-provider') === 'MediaProbe') {
-        const idx = parseInt(audio.getAttribute('data-mp-id'));
-        if (Number.isFinite(idx) && window.hlsPlayer.audioTrack !== idx) window.hlsPlayer.audioTrack = idx;
+    if (audio && bridge && audio.getAttribute('data-provider') === 'MediaProbe') {
+        bridge.showAudio(audio.getAttribute('data-stream'));
     }
     syncUploadMarks(container, live);
     applyFlagSupport(live);
@@ -478,8 +426,9 @@ export function wireTrackHandlers(container, hooks = {}) {
         const target = e.target.closest('.audio');
         if (!target || !container.contains(target)) return;
         markTrack(container, target, 'audio');
-        if (window.hlsPlayer && target.getAttribute('data-provider') === 'MediaProbe') {
-            window.hlsPlayer.audioTrack = parseInt(target.getAttribute('data-mp-id'));
+        const bridge = bridgeFor(container);
+        if (bridge && target.getAttribute('data-provider') === 'MediaProbe') {
+            bridge.showAudio(target.getAttribute('data-stream'));
         }
         if (hooks.onAudioSelect) hooks.onAudioSelect(target);
     });
@@ -525,20 +474,20 @@ export function wireTrackHandlers(container, hooks = {}) {
             const fresh = (subtitlesModal || container).querySelector('.subtitle[data-autoselect="true"]');
             if (fresh) activateSubtitle(container, fresh);
             else {
-                // A delete takes the chip away but not the <track>: that
-                // one lives in <video>, which this swap never touches, so
-                // the deleted file's subtitles stayed on screen with
-                // nothing marked and "Now:" blank. Drop the orphans and,
-                // when the viewer deleted what was playing, land on "Off" —
-                // the honest reading of "I removed that file". persist:
-                // false, because they chose a deletion, not a track.
-                const video = container.querySelector('video.player, audio.player');
+                // A delete takes the chip away but not the track the player
+                // holds, which this swap never touches, so the deleted
+                // file's subtitles stayed on screen with nothing marked and
+                // "Now:" blank. Drop the orphans and, when the viewer
+                // deleted what was playing, land on "Off" — the honest
+                // reading of "I removed that file". persist: false, because
+                // they chose a deletion, not a track.
+                const bridge = bridgeFor(container);
                 const chipIDs = [];
                 for (const el of (subtitlesModal || container).querySelectorAll('.subtitle')) {
                     const cid = el.getAttribute('data-id');
                     if (cid) chipIDs.push(cid);
                 }
-                const wasShowing = dropDeletedTracks(video, chipIDs);
+                const wasShowing = bridge ? bridge.dropMissing(chipIDs) : false;
                 const off = wasShowing && subtitlesModal ? findSubtitleItem(subtitlesModal, 'none') : null;
                 if (off) activateSubtitle(container, off, { persist: false });
                 else syncUploadMarks(container, subtitlesModal);

@@ -1,20 +1,18 @@
 // The AI subtitle translation as the player runs it: the progress poll and
-// the <track> revisions it swaps in, the catch-up pill, the hold (after a
-// seek, after a start, before a line the translation has not reached), the
-// brake and the rewind, and the three handlers of the pill.
+// the cues it puts into the player as they are written (movi-tracks.js), the
+// catch-up pill, the hold (after a seek, after a start, before a line the
+// translation has not reached), the brake and the rewind, and the three
+// handlers of the pill.
 //
 // Moved out of Player.jsx on 2026-09-19, unchanged in behaviour. It is one
 // hook rather than several because its parts share a dozen refs that are the
 // state machine; it is called where the code used to stand, so its effects
 // keep their place in the component's effect order. `late` is a ref the
 // component fills further down with what is declared after the call -- the
-// hls.js instance and the on-screen offer's two operations -- and is only
-// ever read when something happens, never during render.
+// on-screen offer's two operations -- and is only ever read when something
+// happens, never during render.
 
 import { useRef, useState, useEffect, useCallback } from 'preact/hooks';
-import { applyCueOffset } from '../cue-offset';
-import { applySubtitleSelection, readSelection, selectionHolds } from '../subtitle-apply.js';
-import { reloadSubtitleTrack } from '../subtitle-track-reload.js';
 import { readAllTracks, readTracks } from '../subtitle-telemetry.js';
 import { pickDefaultSubtitle, translationAction, hasSavedDefault } from '../subtitle-rules.js';
 import { pollProgress, progressText, withRev } from '../subtitle-progress.js';
@@ -30,12 +28,12 @@ import {
 } from '../track-dialog.js';
 import { tf } from '../i18n';
 
-// TRACK_RELOAD_INTERVAL_MS throttles the <track> src swaps. Every swap
-// refetches the whole partial VTT and leaves the track without cues
-// while the browser reparses it, so reloading on each 3 s poll would
-// blank the subtitles five times a minute. The percentage keeps updating
-// on every poll; only the text catches up in steps.
-const TRACK_RELOAD_INTERVAL_MS = 15000;
+// TRACK_RELOAD_INTERVAL_MS throttles the reads of the growing translation.
+// Every read fetches the whole partial VTT. Nothing blanks while it is read
+// (the cues go into the player as they arrive, movi-tracks.js
+// reloadTranslation), so the cost is the request alone: the percentage keeps
+// updating on every poll, and the text catches up in steps.
+const TRACK_RELOAD_INTERVAL_MS = 5000;
 
 // How often a DIRECT seek may kick the translation poll (a session seek is
 // rationed by its POST). A held arrow key seeks once per key-repeat.
@@ -135,6 +133,10 @@ export function useSubtitleTranslation({ videoRef, videoEl, trackContainer, trac
     // rather than one per repeat. The hold window is re-opened every time
     // either way — it is the kick that is rationed, not the decision.
     const directKickAtRef = useRef(0);
+    // When this hook last moved the playhead itself (finishWait's rewind): the
+    // element's `seeked` for it is not a viewer's seek, and must not open a
+    // hold window of its own.
+    const ownSeekAtRef = useRef(0);
     // A seek happened while a live run was playing: for a short window after
     // the seek settles (catchUpTiming.seekWatchMs) every answer is asked
     // whether to hold playback for the new position's subtitles. A window
@@ -318,7 +320,10 @@ export function useSubtitleTranslation({ videoRef, videoEl, trackContainer, trac
         // would restart the transcoder for a few seconds of film.
         const video = videoRef.current;
         const rewind = video ? resumeRewind(waitFromRef.current, (video.currentTime || 0) + seekOffsetRef.current) : 0;
-        if (rewind > 0) video.currentTime = Math.max(0, (video.currentTime || 0) - rewind);
+        if (rewind > 0) {
+            ownSeekAtRef.current = Date.now();
+            video.currentTime = Math.max(0, (video.currentTime || 0) - rewind);
+        }
         clearWait();
         trailingRef.current = false;
         showCatchUp(null);
@@ -499,9 +504,8 @@ export function useSubtitleTranslation({ videoRef, videoEl, trackContainer, trac
         };
         // One 'track' error per run: a broken revision usually stays
         // broken, and a report per poll would drown the real rate. The
-        // identity check is the other half — a <track> whose src this run
-        // set can still fail after the run was stopped, and that event
-        // belongs to nobody.
+        // identity check is the other half — a read that was in flight when
+        // the run was stopped can still fail, and that belongs to nobody.
         const onTrackError = () => {
             if (runID !== runSeqRef.current) return;
             if (trackErrorReported) return;
@@ -509,54 +513,32 @@ export function useSubtitleTranslation({ videoRef, videoEl, trackContainer, trac
             stopTranslationProgress();
             fail('track');
         };
-        // What the last swap brought into the <track>: the service's count
+        // What the last read brought into the player: the service's count
         // and frontier at that moment (see viewerFrontier).
         let loaded = null;
-        // Where the cues actually in the track end, in movie time: the
-        // stand-in for a frontier when the swap happened with nothing
-        // pending. Cues are in time order; a shifted cue keeps its movie
-        // time in __absEnd (cue-offset.js), an unshifted one is in movie
-        // time already.
-        const coverageEnd = () => {
-            const video = videoRef.current;
-            const el = video ? Array.from(video.querySelectorAll('track')).find((t) => t.id === id) : null;
-            const cues = el && el.track ? el.track.cues : null;
-            if (!cues || !cues.length) return null;
-            const last = cues[cues.length - 1];
-            if (!last) return null;
-            return last.__absEnd !== undefined ? last.__absEnd : (last.endTime || 0);
-        };
-        // Once a revision has settled, the picker's current answer is
-        // written again: the module no longer restores a mode of its own
-        // (see its header), and a <track> load wakes none of the hls.js
-        // events the re-assertion effect listens to.
-        const reassertSelection = () => {
-            if (runID !== runSeqRef.current) return;
-            // Cues put back by the reload (an empty or failed revision
-            // restores the old objects) carry the shift of the run they were
-            // loaded in. After a seek that is another run's offset.
-            if (videoRef.current && videoRef.current.dataset.sessionId) {
-                const el = Array.from(videoRef.current.querySelectorAll('track')).find((t) => t.id === id);
-                if (el && el.track) applyCueOffset(el.track, seekOffsetRef.current);
-            }
-            const selection = readSelection(trackContainer || document);
-            if (!selection) return;
-            const video = videoRef.current;
-            const hls = (late.current.hlsRef && late.current.hlsRef.current) || window.hlsPlayer || null;
-            if (selectionHolds(video, hls, selection)) return;
-            applySubtitleSelection(video, hls, selection);
-        };
+        // Where the cues actually in the player end, in movie time: the
+        // stand-in for a frontier when the read happened with nothing
+        // pending.
+        let lastCueEnd = null;
+        const coverageEnd = () => lastCueEnd;
+        let reading = false;
         const reload = (done, force, frontier = null) => {
+            const bridge = videoEl.__wtTracks;
+            if (!bridge || reading) return;
             const now = Date.now();
             if (!force && now - lastReloadAt < TRACK_RELOAD_INTERVAL_MS) return;
-            // Only a reload that actually swapped the src spends the
-            // throttle window: stamping on a no-op (same revision, or no
-            // <track> element yet) would hold off the next real one for
-            // another 15 s.
-            if (reloadSubtitleTrack(videoRef.current, id, withRev(src, done), onTrackError, reassertSelection)) {
-                lastReloadAt = now;
+            lastReloadAt = now;
+            reading = true;
+            bridge.reloadTranslation(id, withRev(src, done)).then((r) => {
+                reading = false;
+                if (runID !== runSeqRef.current) return;
+                if (!r.ok) {
+                    onTrackError();
+                    return;
+                }
+                lastCueEnd = r.lastEnd;
                 loaded = { done, frontier: frontier === undefined ? null : frontier };
-            }
+            });
         };
         if (!resume && window.umami) window.umami.track('subtitle-translate-start', {
             lang,
@@ -1141,6 +1123,7 @@ export function useSubtitleTranslation({ videoRef, videoEl, trackContainer, trac
     // the seek ~30 times a second, and each kick is an immediate HEAD.
     const onDirectSeek = useCallback(() => {
         const now = Date.now();
+        if (now - ownSeekAtRef.current < 1500) return;
         if (now - directKickAtRef.current >= DIRECT_SEEK_KICK_MS) {
             directKickAtRef.current = now;
             kickTranslationPoll();

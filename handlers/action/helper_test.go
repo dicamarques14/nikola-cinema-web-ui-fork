@@ -31,38 +31,47 @@ func subtitleItems(items []ListItem) map[string]ListItem {
 	return m
 }
 
-func TestGetSubtitlesSkipsPGSWithoutIndexShift(t *testing.T) {
-	// Transcoder drops hdmv_pgs from the HLS group, so the text track
-	// that follows it is HLS subtitle #0, not #1.
+func TestGetSubtitlesPGSTakesNoNumberFromTheOthers(t *testing.T) {
+	// Saved and carried choices name a track "mp-N", N counting what the
+	// transcoder's HLS subtitle group counted, and hdmv_pgs was never in it:
+	// the text track that follows a PGS stays #0. The PGS is offered (the
+	// player draws it) under its stream index.
 	mp := probeWith(`[
-		{"codec_type":"video","codec_name":"h264"},
-		{"codec_type":"subtitle","codec_name":"hdmv_pgs_subtitle","tags":{"language":"eng"}},
-		{"codec_type":"subtitle","codec_name":"subrip","tags":{"language":"rus","title":"Russian"}}
+		{"index":0,"codec_type":"video","codec_name":"h264"},
+		{"index":1,"codec_type":"subtitle","codec_name":"hdmv_pgs_subtitle","tags":{"language":"eng"}},
+		{"index":2,"codec_type":"subtitle","codec_name":"subrip","tags":{"language":"rus","title":"Russian"}}
 	]`)
 	items := NewHelper().GetSubtitles(&models.VideoStreamUserData{}, mp, &ra.ExportTag{}, nil, &models.ExternalData{}, nil, SubtitleOpts{})
 	got := subtitleItems(items)
-	if len(got) != 1 {
-		t.Fatalf("want exactly one embedded track, got %+v", got)
+	if len(got) != 2 {
+		t.Fatalf("want the text and the PGS track, got %+v", got)
 	}
-	it, ok := got["mp-0"]
-	if !ok || it.MPID != "0" || it.SrcLang != "ru" {
-		t.Fatalf("got %+v", got)
+	text, ok := got["mp-0"]
+	if !ok || text.MPID != "0" || text.SrcLang != "ru" || text.Stream != 2 {
+		t.Fatalf("text track: %+v", got)
+	}
+	pgs, ok := got["mp-b1"]
+	if !ok || pgs.MPID != "" || pgs.Stream != 1 || pgs.Src != "" || pgs.Label != "Subtitle (PGS)" {
+		t.Fatalf("PGS track: %+v", got)
 	}
 }
 
-func TestGetSubtitlesHidesDVDSubButKeepsIndex(t *testing.T) {
-	// dvd_subtitle IS in the transcoder's group (only PGS is excluded),
-	// so it occupies HLS index 0 and the text track after it is #1.
+func TestGetSubtitlesDVDSubIsOfferedAndKeepsItsNumber(t *testing.T) {
+	// dvd_subtitle IS in the transcoder's group (only PGS is excluded), so it
+	// is number 0 and the text track after it is 1. The player draws it.
 	mp := probeWith(`[
-		{"codec_type":"subtitle","codec_name":"dvd_subtitle","tags":{"language":"eng"}},
-		{"codec_type":"subtitle","codec_name":"ass","tags":{"language":"eng"}}
+		{"index":0,"codec_type":"subtitle","codec_name":"dvd_subtitle","tags":{"language":"eng"}},
+		{"index":1,"codec_type":"subtitle","codec_name":"ass","tags":{"language":"eng"}}
 	]`)
 	got := subtitleItems(NewHelper().GetSubtitles(&models.VideoStreamUserData{}, mp, &ra.ExportTag{}, nil, &models.ExternalData{}, nil, SubtitleOpts{}))
-	if len(got) != 1 {
+	if len(got) != 2 {
 		t.Fatalf("got %+v", got)
 	}
-	if it, ok := got["mp-1"]; !ok || it.MPID != "1" {
-		t.Fatalf("got %+v", got)
+	if it, ok := got["mp-0"]; !ok || it.Stream != 0 {
+		t.Fatalf("dvd track: %+v", got)
+	}
+	if it, ok := got["mp-1"]; !ok || it.MPID != "1" || it.Stream != 1 {
+		t.Fatalf("text track: %+v", got)
 	}
 }
 
@@ -106,11 +115,11 @@ func TestEmbeddedSubtitleVisible(t *testing.T) {
 	}{
 		{"subrip", "", true, true, false},
 		{"ass", "Signs & Songs", true, true, false},
-		{"hdmv_pgs_subtitle", "", false, false, false},
-		{"dvd_subtitle", "", false, true, false},
-		{"dvb_subtitle", "", false, true, false},
-		// Not bitmaps, but the transcoder has no text output for them
-		// either: hidden, slot kept.
+		{"hdmv_pgs_subtitle", "", true, false, false},
+		{"dvd_subtitle", "", true, true, false},
+		{"dvb_subtitle", "", true, true, false},
+		{"xsub", "", true, true, false},
+		// Not drawn by the player: hidden, slot kept.
 		{"", "", false, true, false},
 		{"hdmv_text_subtitle", "", false, true, false},
 		{"dvb_teletext", "", false, true, false},

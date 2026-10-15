@@ -191,10 +191,11 @@ func TestStreamVideoRenders(t *testing.T) {
 	}
 	var mp api.MediaProbe
 	if err := json.Unmarshal([]byte(`{"streams":[
-		{"codec_type":"video","codec_name":"hevc","width":1920,"height":1080},
-		{"codec_type":"audio","codec_name":"eac3","tags":{"language":"eng"}},
-		{"codec_type":"subtitle","codec_name":"subrip","tags":{"language":"eng"}},
-		{"codec_type":"video","codec_name":"mjpeg"}
+		{"index":0,"codec_type":"video","codec_name":"hevc","width":1920,"height":1080},
+		{"index":1,"codec_type":"audio","codec_name":"eac3","tags":{"language":"eng"}},
+		{"index":2,"codec_type":"subtitle","codec_name":"subrip","tags":{"language":"eng"}},
+		{"index":3,"codec_type":"subtitle","codec_name":"hdmv_pgs_subtitle","tags":{"language":"fra"}},
+		{"index":4,"codec_type":"video","codec_name":"mjpeg"}
 	]}`), &mp); err != nil {
 		t.Fatalf("failed to build MediaProbe fixture: %v", err)
 	}
@@ -207,8 +208,18 @@ func TestStreamVideoRenders(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("failed to render stream_video.html: %v", err)
 	}
-	if out := probed.String(); strings.Contains(out, "data-video-codecs") {
+	out := probed.String()
+	if strings.Contains(out, "data-video-codecs") {
 		t.Error("data-video-codecs rendered with a media probe")
+	}
+	// The player addresses embedded audio and subtitles by the file's own
+	// stream index (movi-player track ids): rendered on every MediaProbe
+	// chip, a bitmap track included (named by its stream, outside the
+	// numbering of the others).
+	for _, want := range []string{`data-id="mp-0" data-mp-id="0" data-stream="1"`, `data-id="mp-0" data-mp-id="0" data-stream="2"`, `data-id="mp-b3" data-mp-id="" data-stream="3"`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("embedded chip missing %s", want)
+		}
 	}
 
 	// The stream job's word on the file against the viewer's cap reaches
@@ -471,10 +482,9 @@ func TestStreamVideoRendersTranslateBadgesAndCTA(t *testing.T) {
 		t.Fatal("the CTA card no longer follows the track row")
 	}
 	tracks := html[tracksAt:ctaAt]
-	// hls-manager.remapTrackGroup assigns data-mp-id by DOM order when the
-	// counts match, so the embedded chips must appear in GetSubtitles order.
-	// Scoped to the track row on purpose: the audio chips above carry
-	// mp-ids too, and an unscoped search would pass on those alone.
+	// The embedded chips appear in GetSubtitles order. Scoped to the track
+	// row on purpose: the audio chips above carry mp-ids too, and an
+	// unscoped search would pass on those alone.
 	if a, b := strings.Index(tracks, `data-mp-id="0"`), strings.Index(tracks, `data-mp-id="1"`); a < 0 || b < 0 || a > b {
 		t.Errorf("embedded subtitle chips are out of GetSubtitles order (mp-0 at %d, mp-1 at %d)", a, b)
 	}

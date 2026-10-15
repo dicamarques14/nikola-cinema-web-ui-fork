@@ -2,16 +2,24 @@ import { render } from 'preact';
 import { useRef, useState, useEffect, useCallback } from 'preact/hooks';
 import { usePlayerState } from './hooks/usePlayerState';
 import { useWatchHistory } from './hooks/useWatchHistory';
+import { useSubtitleTranslation } from './hooks/useSubtitleTranslation';
 import { createGraceHold } from './grace-hold';
-import { loadPrefs, savePrefs } from './player-prefs';
+import { loadPrefs, savePrefs, loadSubtitleDelay, saveSubtitleDelay } from './player-prefs';
+import { normalizeDelay, SUBTITLE_DELAY_STEP } from './cue-offset';
+import { createTrackBridge } from './movi-tracks';
 import { readNext, advancePlan, atEnd, resumeAt, readStreak, writeStreak, countdown } from './next-item';
 import { createNextItemGo, canMoveOn, takeFallbackNote } from './next-item-go';
 import { HAS_POPOVER, useDockedPopover } from './useAnchoredPopover';
-import { creditsStart, cuesOfLoadedTracks, parseVttTimings, timingSourceURL, creditsFromElement } from './credits';
-import { track } from './player-telemetry';
+import { creditsStart, parseVttTimings, timingSourceURL, creditsFromElement } from './credits';
+import { track, settled } from './player-telemetry';
 import { readTracks, resolveSubtitleLevel } from './subtitle-telemetry.js';
+import { offerTiming, offerVisible, pickOffer, suppressUpsell, upsellSuppressed } from './subtitle-offer.js';
+import { readChips } from './track-picker.js';
 import { markAutoResume, takeAutoResume } from './preferred-lang.js';
-import { releaseTrackDialog, toggleDialog, wireTrackHandlers } from './track-dialog.js';
+import {
+    activateSubtitle, findSubtitleItem, findSubtitlesModal, offerStorage, readUpsellCard, releaseTrackDialog, toggleDialog, wireTrackHandlers,
+} from './track-dialog.js';
+import { LoadingSpinner } from './icons';
 import { BufferingPill, capCardOpen, closeCapCard, onCapCard, openCapCard } from './BufferingLabel';
 import { answerLabel, capLock, lockKey, statusSpoke } from './buffering-label';
 import { currentPlayerCause, currentPlayerLabel, onPlayerLabel } from '../playerLabel';
@@ -95,6 +103,142 @@ function PlayerComponent({ videoEl, isVideo, settings, containerEl, showControls
     // answers the HTMLMediaElement surface, so this is the hook a <video>
     // had; its own controls are not drawn (movi-player draws them).
     const state = usePlayerState(videoRef, containerRef, { duration, seekOffset: 0, seeking: false });
+
+    // ---- what the picker chose, on screen ---------------------------------
+    // Once the file's metadata is in (embedded tracks are known only then) the
+    // dialog's default chips -- the server's ladder, a saved choice, a carried
+    // one -- are put on screen the way a click would, minus the PUT: nothing
+    // was chosen here.
+    useEffect(() => {
+        const bridge = videoEl.__wtTracks;
+        if (!bridge) return undefined;
+        let cancelled = false;
+        bridge.ready.then(() => {
+            if (cancelled) return;
+            const modal = document.getElementById('subtitles');
+            if (!modal) return;
+            const sub = modal.querySelector('.subtitle[data-default="true"]');
+            if (sub && sub.getAttribute('data-id') !== 'none') activateSubtitle(trackContainer, sub, { persist: false });
+            const audio = modal.querySelector('.audio[data-default="true"]');
+            if (audio && audio.getAttribute('data-provider') === 'MediaProbe') bridge.showAudio(audio.getAttribute('data-stream'));
+        });
+        return () => { cancelled = true; };
+    }, []);
+
+    // ---- the subtitle delay -----------------------------------------------
+    // The viewer's delay for this file (seconds, positive = later), remembered
+    // per file (player-prefs.js). movi-player has one delay for whatever it
+    // draws -- embedded tracks too -- and tells the page when it changes, by
+    // the dialog's row or its own keys. The row in the #subtitles dialog is
+    // server markup, painted and driven from here.
+    const delayKey = resourceID && path ? `${resourceID}:${path}` : '';
+    const subDelayRef = useRef(0);
+    const delayEventRef = useRef(null);
+    if (!delayEventRef.current) delayEventRef.current = settled((v) => track('subtitle-delay', v), 2000);
+    const delaySourceRef = useRef('dialog');
+    useEffect(() => () => delayEventRef.current.flush(), []);
+    const formatDelay = (d) => `${d > 0 ? '+' : d < 0 ? '\u2212' : ''}${Math.abs(d).toFixed(2)}`;
+    const paintSubDelay = useCallback(() => {
+        const modal = document.getElementById('subtitles');
+        const row = modal && modal.querySelector('#subtitle-delay');
+        if (!row) return;
+        const d = subDelayRef.current;
+        const value = row.querySelector('#subtitle-delay-value');
+        if (value) value.textContent = tf('player.subtitleDelayValue', formatDelay(d));
+        const reset = row.querySelector('[data-sub-delay="reset"]');
+        if (reset) {
+            reset.hidden = false;
+            reset.classList.remove('invisible');
+            reset.removeAttribute('tabindex');
+        }
+        // The switch is the one live statement of on/off (markTrack moves it).
+        const toggle = modal.querySelector('#subtitles-toggle');
+        const off = toggle ? !toggle.checked : false;
+        for (const b of row.querySelectorAll('button[data-sub-delay]')) {
+            b.disabled = off || (b.dataset.subDelay === 'reset' && d === 0);
+        }
+        row.classList.toggle('opacity-50', off);
+        row.title = '';
+    }, []);
+    const changeSubDelay = useCallback((next, source) => {
+        delaySourceRef.current = source;
+        videoEl.subtitleDelay = normalizeDelay(next);
+    }, []);
+    useEffect(() => {
+        const start = normalizeDelay(loadSubtitleDelay(delayKey));
+        subDelayRef.current = start;
+        if (start !== 0) videoEl.subtitleDelay = start;
+        const onChange = (e) => {
+            const d = normalizeDelay(e.detail && e.detail.subtitleDelay);
+            subDelayRef.current = d;
+            saveSubtitleDelay(delayKey, d);
+            delayEventRef.current.push({ delay: d, source: delaySourceRef.current });
+            delaySourceRef.current = 'key';
+            paintSubDelay();
+        };
+        videoEl.addEventListener('subtitledelaychange', onChange);
+        paintSubDelay();
+        // Delegated on the document: the dialog is swapped whole on a
+        // preferred-language change, and repainted after ANY click inside it
+        // -- a track pick or the on/off switch changes whether there is
+        // anything to shift.
+        const onClick = (e) => {
+            const modal = e.target.closest && e.target.closest('#subtitles');
+            if (!modal) return;
+            const btn = e.target.closest('[data-sub-delay]');
+            if (btn && !btn.disabled) {
+                const op = btn.dataset.subDelay;
+                const cur = subDelayRef.current;
+                changeSubDelay(op === 'reset' ? 0 : cur + (op === 'later' ? SUBTITLE_DELAY_STEP : -SUBTITLE_DELAY_STEP), 'dialog');
+                return;
+            }
+            setTimeout(paintSubDelay, 0);
+        };
+        // VLC's keys: g earlier, h later.
+        const onKey = (e) => {
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.ctrlKey || e.metaKey || e.altKey) return;
+            if (e.key !== 'g' && e.key !== 'h') return;
+            e.preventDefault();
+            changeSubDelay(subDelayRef.current + (e.key === 'h' ? SUBTITLE_DELAY_STEP : -SUBTITLE_DELAY_STEP), 'key');
+        };
+        document.addEventListener('click', onClick);
+        document.addEventListener('keydown', onKey);
+        return () => {
+            videoEl.removeEventListener('subtitledelaychange', onChange);
+            document.removeEventListener('click', onClick);
+            document.removeEventListener('keydown', onKey);
+        };
+    }, []);
+
+    // ---- the AI translation (hooks/useSubtitleTranslation.js) --------------
+    // The run, its progress poll, the catch-up hold and everything that
+    // decides them live in the hook. `late` carries what is only declared
+    // further down (the on-screen offer): the hook reads it when it acts,
+    // never while rendering. A direct file has one timeline and one run, so
+    // the session machinery the hook still carries sees offset 0 and no seek
+    // in flight.
+    const seekOffsetRef = useRef(0);
+    const sessionSeekingRef = useRef(false);
+    const late = useRef({ withdrawOffer: () => {}, redecideOffer: () => {} });
+    const translation = useSubtitleTranslation({
+        videoRef, videoEl, trackContainer, trackHooks, seekOffset: 0, seekOffsetRef, sessionSeekingRef, late,
+    });
+    const { catchUp, preHolding, onDirectSeek, cancelPreHold, handleWait, handleKeepWatching, handleDismissCatchUp } = translation;
+    // movi-player's controls seek and play on their own: the hook learns of
+    // it from the element. A seek by the viewer opens the translation's hold
+    // window; a Play while the silent hold is on means "pause" (the picture
+    // reads as a seek in progress, not a paused film), so the hold ends and
+    // the film stays where it is.
+    useEffect(() => {
+        const onSeeked = () => onDirectSeek();
+        const onPlay = () => { if (cancelPreHold()) videoEl.pause(); };
+        videoEl.addEventListener('seeked', onSeeked);
+        videoEl.addEventListener('play', onPlay);
+        return () => {
+            videoEl.removeEventListener('seeked', onSeeked);
+            videoEl.removeEventListener('play', onPlay);
+        };
+    }, [onDirectSeek, cancelPreHold]);
 
     // Resume prompt state -- must be declared before useWatchHistory which reads it.
     const [showResumePrompt, setShowResumePrompt] = useState(false);
@@ -362,6 +506,99 @@ function PlayerComponent({ videoEl, isVideo, settings, containerEl, showControls
         else handleStartOver();
     }, [showResumePrompt, handleResume, handleStartOver]);
 
+    // ---- the on-screen translation offer (subtitle-offer.js) ----------
+    //
+    // Decided once, on the first play: the pill is about "this film has no
+    // subtitles in your language", a property of the page the server rendered,
+    // not something to re-ask on every resume. Read at first play rather than
+    // at mount: it stays off a page that never plays (autoplay blocked, resume
+    // prompt up) and gives the mount-time restore of a saved translation time
+    // to make the chip the default -- which withdraws the offer by pickOffer's
+    // own rule.
+    const [controlsVisible, setControlsVisible] = useState(true);
+    const [offer, setOffer] = useState(null);
+    const [offerLingering, setOfferLingering] = useState(false);
+    const [offerCard, setOfferCard] = useState(false);
+    const offerArmedRef = useRef(false);
+    // Bumped when the dialog is re-rendered for another language, so the
+    // offer below is decided again.
+    const [dialogVersion, setDialogVersion] = useState(0);
+    const offerTimerRef = useRef(null);
+    late.current.withdrawOffer = () => { setOffer(null); setOfferCard(false); };
+    late.current.redecideOffer = () => { offerArmedRef.current = false; setDialogVersion((v) => v + 1); };
+    // movi-player hides its bar when the film plays; the pill goes with it.
+    useEffect(() => {
+        const show = () => setControlsVisible(true);
+        const hide = () => { if (!videoEl.paused) setControlsVisible(false); };
+        let timer = null;
+        const onMove = () => {
+            show();
+            if (timer) clearTimeout(timer);
+            timer = setTimeout(hide, 3000);
+        };
+        containerEl.addEventListener('mousemove', onMove);
+        containerEl.addEventListener('touchstart', onMove);
+        videoEl.addEventListener('pause', show);
+        onMove();
+        return () => {
+            if (timer) clearTimeout(timer);
+            containerEl.removeEventListener('mousemove', onMove);
+            containerEl.removeEventListener('touchstart', onMove);
+            videoEl.removeEventListener('pause', show);
+        };
+    }, []);
+
+    const trackOffer = useCallback((name, o, extra) => {
+        if (window.umami) window.umami.track(name, { lang: o.lang, kind: o.kind, ...(extra || {}) });
+    }, []);
+
+    useEffect(() => {
+        if (!isVideo || !state.playing || offerArmedRef.current) return;
+        // Not under the resume prompt: autoplay can get a moment of playback
+        // in before the saved position arrives, and a pill decided then would
+        // spend its ten seconds behind the prompt's overlay.
+        if (!resumeReady || (resumePosition > 0 && !resumeAnswered)) return;
+        offerArmedRef.current = true;
+        const modal = findSubtitlesModal(trackContainer);
+        if (!modal) return;
+        const next = pickOffer(readChips(modal));
+        if (!next || !next.label) return;
+        if (next.kind === 'upsell' && upsellSuppressed(offerStorage(), Date.now())) return;
+        setOffer(next);
+        setOfferLingering(true);
+        offerTimerRef.current = setTimeout(() => setOfferLingering(false), offerTiming.lingerMs);
+        trackOffer('subtitle-offer-shown', next);
+    }, [state.playing, isVideo, trackContainer, trackOffer, resumeReady, resumePosition, resumeAnswered, dialogVersion]);
+
+    useEffect(() => () => { if (offerTimerRef.current) clearTimeout(offerTimerRef.current); }, []);
+
+    const handleOfferClick = useCallback(() => {
+        if (!offer) return;
+        trackOffer('subtitle-offer-click', offer);
+        if (offer.kind === 'upsell') {
+            setOfferCard((open) => !open);
+            return;
+        }
+        // Taking the offer IS pressing the chip: the same delegated handler,
+        // so the same PUT, the same marks, the same poll. The chip is asked
+        // again whether it is still on offer -- an audio switch or a manual
+        // pick may have spent it since the pill was decided.
+        const modal = findSubtitlesModal(trackContainer);
+        const el = modal ? findSubtitleItem(modal, offer.id) : null;
+        setOffer(null);
+        if (el && el.getAttribute('data-offered') === 'true') el.click();
+    }, [offer, trackContainer, trackOffer]);
+
+    // how: 'close' (the x), 'later' (Not now), 'never' (Don't offer).
+    // Only the upsell is remembered; see subtitle-offer.js.
+    const handleOfferDismiss = useCallback((how) => {
+        if (!offer) return;
+        if (offer.kind === 'upsell') suppressUpsell(offerStorage(), Date.now(), { never: how === 'never' });
+        trackOffer('subtitle-offer-dismiss', offer, { how });
+        setOffer(null);
+        setOfferCard(false);
+    }, [offer, trackOffer]);
+
     // A player mounted by a move to the next file (next-item-go.js) is about
     // to play by itself. Until it does, it is LOADING, not paused.
     const [awaitingStart, setAwaitingStart] = useState(awaitStart);
@@ -462,7 +699,10 @@ function PlayerComponent({ videoEl, isVideo, settings, containerEl, showControls
             creditsAtRef.current = at;
             track('next-item-credits', { source, found: at !== null, lead_s: at !== null ? Math.round(dur - at) : 0, next: !!next });
         };
-        const loaded = cuesOfLoadedTracks(videoRef.current);
+        // The cues the bridge holds for the track on screen (a translation's);
+        // any other track's are read from its file below, once.
+        const bridge = videoEl.__wtTracks;
+        const loaded = (bridge ? bridge.cuesOf(bridge.activeId()) : []).map((c) => ({ start: c.start, end: c.end }));
         if (loaded.length && creditsStart(loaded, dur) !== null) { settle(loaded, 'loaded'); return; }
         const src = timingSourceURL(document.getElementById('subtitles'));
         if (!src) {
@@ -577,7 +817,15 @@ function PlayerComponent({ videoEl, isVideo, settings, containerEl, showControls
             add({ id: 'wt-embed', label: t('player.embed'), icon: ICON_EMBED, placement: 'menu', onSelect: () => toggleDialog('embed') });
         }
         if (isVideo && features.advancedtracks && document.getElementById('subtitles')) {
-            add({ id: 'wt-tracks', label: t('player.subtitlesAndAudio'), icon: ICON_TRACKS, placement: 'menu', onSelect: () => toggleDialog('subtitles') });
+            // On the bar where movi-player's own CC and audio buttons were
+            // (controlsListFor switches them off: this picker is the one).
+            add({
+                id: 'wt-tracks', label: t('player.subtitlesAndAudio'), icon: ICON_TRACKS, placement: ['bar', 'menu'],
+                before: 'settings', onSelect: () => {
+                    toggleDialog('subtitles');
+                    paintSubDelay();
+                },
+            });
         }
         if (next) {
             add({
@@ -665,7 +913,7 @@ function PlayerComponent({ videoEl, isVideo, settings, containerEl, showControls
         return onCapCard(setCapCardUp);
     }, []);
     const bufferingShown = showControls && isVideo && !showResumePrompt
-        && (nextLoading || (awaitingStart && !state.playing) || (state.playing && state.loading));
+        && (preHolding || nextLoading || (awaitingStart && !state.playing) || (state.playing && state.loading));
     const graceUp = graceOpen || (!!graceDurationSec && !graceShownRef.current
         && state.currentTime >= graceDurationSec && !!document.querySelector('#grace-cta'));
     const answered = 'graceCtaAnswered' in videoEl.dataset && !nextLoading;
@@ -721,6 +969,73 @@ function PlayerComponent({ videoEl, isVideo, settings, containerEl, showControls
                     </div>
                 </div>
             )}
+
+            {/* The AI translation is behind the playhead -- offer to wait
+                for it. A top-centre pill: the subtitles it is about live
+                at the bottom of the picture and the controls under them. */}
+            {/* The subtitles are back: said once, for a few seconds, so the
+                pill that explained their absence does not just vanish. */}
+            {catchUp && catchUp.caughtUp && isVideo && (
+                <div class="wt-catchup wt-catchup--done" role="status"
+                     onClick={(e) => e.stopPropagation()} onDblClick={(e) => e.stopPropagation()}>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+                    <span class="wt-catchup-text">{t('player.subtitleCaughtUp')}</span>
+                </div>
+            )}
+            {catchUp && !catchUp.caughtUp && isVideo && (
+                <div class="wt-catchup" role="status"
+                     onClick={(e) => e.stopPropagation()} onDblClick={(e) => e.stopPropagation()}>
+                    <LoadingSpinner />
+                    <span class="wt-catchup-text">
+                        {t(catchUp.waiting ? 'player.subtitleCatchUpWaitingShort' : 'player.subtitleCatchUpShort')}
+                    </span>
+                    <button type="button" class="wt-catchup-btn"
+                        onClick={catchUp.waiting ? handleKeepWatching : handleWait}>
+                        {t(catchUp.waiting ? 'player.subtitleCatchUpResume' : 'player.subtitleCatchUpWait')}
+                    </button>
+                    <button type="button" class="wt-catchup-close"
+                        aria-label={t('player.subtitleCatchUpDismiss')} onClick={handleDismissCatchUp}>×</button>
+                </div>
+            )}
+
+            {/* No subtitles in the viewer's language: the picker's offer,
+                brought to the picture. Same slot as the catch-up pill, which
+                wins it (offerVisible). */}
+            {isVideo && offerVisible({ offer, lingering: offerLingering, controlsVisible, cardOpen: offerCard, catchUp }) && (
+                <div class="wt-catchup wt-offer" data-kind={offer.kind}
+                     onClick={(e) => e.stopPropagation()} onDblClick={(e) => e.stopPropagation()}>
+                    <button type="button" class="wt-offer-main" onClick={handleOfferClick}
+                        aria-expanded={offer.kind === 'upsell' ? String(offerCard) : undefined}>
+                        <span class="wt-offer-mark" aria-hidden="true">✦ AI</span>
+                        <span class="wt-catchup-text">{offer.label}</span>
+                        {offer.kind === 'upsell' && (
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                        )}
+                    </button>
+                    <button type="button" class="wt-catchup-close"
+                        aria-label={t('player.subtitleCatchUpDismiss')} onClick={() => handleOfferDismiss('close')}>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+                    </button>
+                </div>
+            )}
+            {isVideo && offer && offer.kind === 'upsell' && offerCard && !catchUp && (() => {
+                const card = readUpsellCard(findSubtitlesModal(trackContainer));
+                return (
+                    <div class="wt-offer-card" role="dialog" aria-label={offer.label}
+                         onClick={(e) => e.stopPropagation()} onDblClick={(e) => e.stopPropagation()}>
+                        <p class="wt-offer-card-text">{card.text}</p>
+                        {card.href && (
+                            <a class="wt-offer-card-cta" href={card.href} target="_blank" rel="noopener"
+                               data-umami-event="donate-subtitle-translate" data-umami-event-tier={card.tier}
+                               data-umami-event-source="player">{card.cta}</a>
+                        )}
+                        <div class="wt-offer-card-row">
+                            <button type="button" class="wt-offer-card-link" onClick={() => handleOfferDismiss('later')}>{t('player.subtitleOfferLater')}</button>
+                            <button type="button" class="wt-offer-card-link" onClick={() => handleOfferDismiss('never')}>{t('player.subtitleOfferNever')}</button>
+                        </div>
+                    </div>
+                );
+            })()}
 
             {/* The buffering label, said by a live region of its own that is
                 there before its words. */}
@@ -806,9 +1121,12 @@ export function parseFeatures(settings, isVideo) {
 
 // controlsListFor maps the page's features onto movi-player's controlslist
 // tokens. The spinner is always off: the buffering label (with the plan's
-// lock) takes its place.
-export function controlsListFor(features) {
+// lock) takes its place. With the picker on the page movi-player's own
+// captions and audio controls go too.
+export function controlsListFor(features, hasPicker = false) {
     const off = ['nospinner'];
+    // The picker dialog is the one place tracks are chosen (movi-tracks.js).
+    if (hasPicker) off.push('nocc', 'noaudio');
     if (!features.playpause) off.push('noplay', 'nocenterplay');
     if (!features.progress) off.push('noprogress');
     if (!features.duration) off.push('notime');
@@ -825,18 +1143,26 @@ export function controlsListFor(features) {
 // track picker) and its children (<source>, <track>) move over, `controls`
 // and the box size are the caller's. The element is created after the
 // engine module has registered it, so it is upgraded on creation.
-function upgradeToMovi(media, { controls, features }) {
+function upgradeToMovi(media, { controls, features, hasPicker }) {
     const el = document.createElement('movi-player');
     for (const a of Array.from(media.attributes)) {
         if (a.name === 'controls' || a.name === 'width' || a.name === 'height') continue;
         el.setAttribute(a.name, a.value);
     }
     el.setAttribute('wasmurl', wasmURL());
-    el.setAttribute('controlslist', controlsListFor(features));
+    el.setAttribute('controlslist', controlsListFor(features, hasPicker));
     if (controls) el.setAttribute('controls', '');
     const title = media.dataset.resourceTitle;
     if (title) el.setAttribute('title', title);
-    while (media.firstChild) el.appendChild(media.firstChild);
+    // With the picker on the page it owns the tracks (movi-tracks.js): the
+    // <track> children would be registered by movi-player under their
+    // language too, and shadow the picker's. Without one (a bare embed) they
+    // are all the viewer has, and stay.
+    while (media.firstChild) {
+        const child = media.firstChild;
+        if (hasPicker && child.nodeName === 'TRACK') media.removeChild(child);
+        else el.appendChild(child);
+    }
     media.replaceWith(el);
     return el;
 }
@@ -892,7 +1218,15 @@ export async function initPlayer(target, opts = {}) {
     if (opts.aspectRatio) playerContainer.style.aspectRatio = opts.aspectRatio;
     mountEl.appendChild(playerContainer);
     playerContainer.appendChild(media);
-    const videoEl = upgradeToMovi(media, { controls: showControls, features });
+    const hasPicker = !!document.getElementById('subtitles');
+    const videoEl = upgradeToMovi(media, { controls: showControls, features, hasPicker });
+    // What the picker puts on screen goes through this (track-dialog.js
+    // bridgeFor): on the element, since module state is per bundle.
+    if (hasPicker) {
+        videoEl.__wtTracks = createTrackBridge(videoEl, {
+            onError: (id) => track('subtitle-load-error', { id: String(id).slice(0, 60) }),
+        });
+    }
 
     // The track picker and the embed dialog are wired on their own modals,
     // outside the player; `trackHooks` is the hand-off point the component
@@ -967,6 +1301,10 @@ export function destroyPlayer({ keepStage = false } = {}) {
     const { stage, mountEl, layer, videoEl } = _currentPlayer;
 
     render(null, layer);
+    if (videoEl.__wtTracks) {
+        videoEl.__wtTracks.dispose();
+        videoEl.__wtTracks = null;
+    }
     // movi-player tears itself down when it leaves the document
     // (disconnectedCallback): fetches aborted, engine destroyed.
     videoEl.remove();
