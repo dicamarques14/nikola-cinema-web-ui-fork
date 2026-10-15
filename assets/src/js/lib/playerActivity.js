@@ -155,7 +155,7 @@ export function createPlayerActivity(doc = document, { now = () => Date.now(), o
         return st;
     };
     let stallEl = null;
-    const media = () => doc.querySelectorAll('video, audio');
+    const media = () => doc.querySelectorAll('video, audio, movi-player');
     // A paused player filling its buffer: sampled whenever the verdict is
     // asked for, since nothing else says so. While the element plays, its
     // buffer is only the baseline, followed on every sample (each media

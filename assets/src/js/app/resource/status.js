@@ -48,7 +48,7 @@ const TICK_MS = 1000;
 // A film playing on screen: the page's own video, not paused or ended, at
 // least partly between the navbar and the bottom of the window.
 const playingOnScreen = () => {
-    for (const v of document.querySelectorAll('video')) {
+    for (const v of document.querySelectorAll('video, movi-player')) {
         if (v.paused || v.ended) continue;
         const b = v.getBoundingClientRect();
         if (b.bottom > NAVBAR_H && b.top < window.innerHeight) return v;

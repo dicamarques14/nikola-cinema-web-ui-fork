@@ -1,47 +1,17 @@
 import { render } from 'preact';
 import { useRef, useState, useEffect, useCallback } from 'preact/hooks';
 import { usePlayerState } from './hooks/usePlayerState';
-import { useHls } from './hooks/useHls';
 import { useWatchHistory } from './hooks/useWatchHistory';
-import { useSubtitleTranslation } from './hooks/useSubtitleTranslation';
-import { createSessionSeeker } from './session-seek';
 import { createGraceHold } from './grace-hold';
-import { Hls } from './hls-manager';
-import { applyCueOffset, setTrackDelay, normalizeDelay, SUBTITLE_DELAY_STEP } from './cue-offset';
-import { stepRate, rateLabel, loadSubtitleDelay, saveSubtitleDelay, loadPrefs, savePrefs } from './player-prefs';
-import { createTapSeek } from './tap-seek';
-import { localSeekTarget, producedEnd, exactPlace } from './local-seek';
-import { bindMediaSession } from './media-session';
+import { loadPrefs, savePrefs } from './player-prefs';
 import { readNext, advancePlan, atEnd, resumeAt, readStreak, writeStreak, countdown } from './next-item';
-import { createBackgroundRestart } from './background-restart.js';
 import { createNextItemGo, canMoveOn, takeFallbackNote } from './next-item-go';
 import { HAS_POPOVER, useDockedPopover } from './useAnchoredPopover';
 import { creditsStart, cuesOfLoadedTracks, parseVttTimings, timingSourceURL, creditsFromElement } from './credits';
-import { track, settled } from './player-telemetry';
-import { reportCodecSupport, whenPlaying, sourceCodec, playbackPath, watchPlaybackQuality } from './codec-support';
-import { createPassthroughGuard, createAudioGuard, fallbackToOldRoute, fallbackAudio, fallbackToTranscoder, restartFallback, startAudioClass } from './passthrough.js';
-import { clearPendingFallback, declaresAudio } from './decode-declaration.js';
-import { reportReleaseCheck } from '../discover/release-check.js';
-import { applySubtitleSelection, isEmbedded, readSelection, selectionHolds } from './subtitle-apply.js';
+import { track } from './player-telemetry';
 import { readTracks, resolveSubtitleLevel } from './subtitle-telemetry.js';
 import { markAutoResume, takeAutoResume } from './preferred-lang.js';
-import {
-    refresh,
-    applyFlagSupport,
-    readChips,
-} from './track-picker.js';
-import { offerTiming, offerVisible, pickOffer, suppressUpsell, upsellSuppressed } from './subtitle-offer.js';
-import {
-    findSubtitleItem,
-    findSubtitlesModal,
-    offerStorage,
-    readUpsellCard,
-    releaseTrackDialog,
-    toggleDialog,
-    wireTrackHandlers,
-} from './track-dialog.js';
-import { Controls } from './Controls';
-import { LoadingSpinner, ShareIcon } from './icons';
+import { releaseTrackDialog, toggleDialog, wireTrackHandlers } from './track-dialog.js';
 import { BufferingPill, capCardOpen, closeCapCard, onCapCard, openCapCard } from './BufferingLabel';
 import { answerLabel, capLock, lockKey, statusSpoke } from './buffering-label';
 import { currentPlayerCause, currentPlayerLabel, onPlayerLabel } from '../playerLabel';
@@ -49,78 +19,65 @@ import { init as initI18n, t, tf } from './i18n';
 import { getLang } from '../i18n';
 import { shareResource } from '../share/share';
 import '../../../styles/player.css';
-import { readStreamUrl } from './stream-url.js';
-import { createDeadPlayerWatch } from './dead-player.js';
-import { loopGivesUp } from './fragment-loop.js';
-import { createVodGuard, isVodStream, composeGuards } from './vod-guard.js';
-import {
-    createRecoveryPolicy, fileKey as restartKey, safeSessionStorage, takeNote, writeNote, restartStream, clearPurgeMarks, markNextStart,
-} from './stream-restart.js';
+
+// The player is <movi-player> (movi-player, Apache-2.0): it opens the file
+// itself -- the download URL the stream job renders as the <source> -- and
+// demuxes and decodes it in the browser (WebCodecs, FFmpeg compiled to
+// WebAssembly). Nothing is transcoded. It draws its own controls, keyboard,
+// gestures, captions menu and the lock screen's media session; this module
+// mounts it in place of the server-rendered <video>/<audio> and lays webtor's
+// own parts over it: the resume prompt and the watch history, the grace
+// popup, the buffering label with the plan's lock, the next file, share and
+// embed. docs/player.md.
 
 let _currentPlayer = null;
 
-// A stream restart's exact place (exactRestartPlace): how often it looks at
-// the new run, and for how long at most.
-const RESTART_CHECK_MS = 500;
-const RESTART_EXACT_MAX_MS = 2 * 60 * 1000;
-
 // ENGAGEMENT_SECONDS is the playback time (not wall clock) after which a
 // session counts as real viewing, so press-play-and-bounce does not skew
-// the denominator. Telemetry only since 2026-09-16 — the AI translation
-// auto-start used to hang off it and no longer exists.
+// the denominator of the stream-start event.
 const ENGAGEMENT_SECONDS = 5;
 
-// Cast sender SDK loader — module-level so repeated player inits (one per
-// file click) share a single <script> append and a single
-// window.__onGCastApiAvailable callback. Without this every init while the
-// SDK was still loading (or forever, with gstatic blocked by an adblocker)
-// appended another script tag and overwrote the previous player's callback.
-let castSenderPromise = null;
-function loadCastSender() {
-    if (window.cast) return Promise.resolve(true);
-    if (!castSenderPromise) {
-        castSenderPromise = new Promise((resolve) => {
-            window.__onGCastApiAvailable = (available) => resolve(!!available);
-            const s = document.createElement('script');
-            s.src = 'https://www.gstatic.com/cv/js/sender/v1/cast_sender.js?loadCastFramework=1';
-            s.onerror = () => resolve(false);
-            document.body.appendChild(s);
-        });
-    }
-    return castSenderPromise;
+// The engine, loaded with the first player and shared by every one after it.
+// The slim build: the 5.6 MB movi.wasm is a file of its own, copied next to
+// the bundles by webpack.config.js -- webpack bakes the build machine's
+// file:// path into the build's own import.meta.url lookup, so the element is
+// told where the file is (wasmURL). It also turns off the slim build's silent
+// fall back to the browser's own <video>, which cannot play what this player
+// is for: a broken engine shows its error instead.
+let enginePromise = null;
+function loadEngine() {
+    if (!enginePromise) enginePromise = import('movi-player/element/slim');
+    return enginePromise;
 }
 
+// wasmURL is movi.wasm next to the bundle this module was loaded from: the
+// runtime public path webpack resolves (`auto`), so a CDN asset host
+// (WEB_ASSETS_HOST) is followed too.
+function wasmURL() {
+    // eslint-disable-next-line no-undef
+    const base = typeof __webpack_public_path__ === 'string' && __webpack_public_path__ ? __webpack_public_path__ : '/assets/';
+    return base + 'movi.wasm';
+}
+
+// Icons for the controls this page adds to movi-player's bar and menu.
+const ICON_SHARE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4"/></svg>';
+const ICON_EMBED = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 18l6-6-6-6M8 6l-6 6 6 6"/></svg>';
+const ICON_NEXT = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M5 5.5v13a1 1 0 0 0 1.5.86L16 13.6V18a1 1 0 0 0 2 0V6a1 1 0 0 0-2 0v4.4L6.5 4.64A1 1 0 0 0 5 5.5z"/></svg>';
+const ICON_TRACKS = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 15h4M13 15h4M7 11h10"/></svg>';
+
 /**
- * Main Player Preact component.
- * Wraps <video>/<audio>, renders custom controls, manages HLS + session seeking.
+ * Main Player Preact component: webtor's layer over <movi-player>.
  */
-function PlayerComponent({ videoEl, settings, containerEl, showControls, fixedSize, trackContainer, trackHooks, awaitStart = false, restartState = null }) {
+function PlayerComponent({ videoEl, isVideo, settings, containerEl, showControls, fixedSize, trackContainer, trackHooks, awaitStart = false }) {
     const containerRef = useRef(containerEl);
     const videoRef = useRef(videoEl);
-    const [seekOffset, setSeekOffset] = useState(0);
-    const [sessionSeeking, setSessionSeeking] = useState(false);
-    const sessionSeekingRef = useRef(false);
-    // A resume-prompt answer given while a session seek was in flight, and
-    // handleSeek behind a ref so the seeking callback (declared before it)
-    // can carry that answer out.
-    const pendingResumeRef = useRef(null);
-    const handleSeekRef = useRef(() => {});
-    const [controlsVisible, setControlsVisible] = useState(true);
-    const [castAvailable, setCastAvailable] = useState(false);
-    const hideTimerRef = useRef(null);
-    const sessionSeekerRef = useRef(null);
 
-    const isVideo = videoEl.tagName === 'VIDEO';
     const duration = videoEl.getAttribute('data-duration') ? parseFloat(videoEl.getAttribute('data-duration')) : -1;
-    const sessionId = videoEl.dataset.sessionId;
-    const sessionSeekUrl = videoEl.dataset.sessionSeekUrl;
-    const sessionDeletePath = videoEl.dataset.sessionDeletePath;
-    const isSession = !!sessionId;
     const graceDurationSec = videoEl.dataset.graceDurationSec ? parseInt(videoEl.dataset.graceDurationSec, 10) : 0;
     const graceShownRef = useRef(false);
     // The grace popup holds the film until the viewer answers it
-    // (grace-hold.js), and the answer while it is up -- the popup's own
-    // buttons or Play (togglePlay) -- goes through graceAnswerRef.
+    // (grace-hold.js), and the answer while it is up goes through
+    // graceAnswerRef.
     const graceHoldRef = useRef(null);
     if (!graceHoldRef.current) graceHoldRef.current = createGraceHold(videoEl);
     const graceAnswerRef = useRef(null);
@@ -128,485 +85,28 @@ function PlayerComponent({ videoEl, settings, containerEl, showControls, fixedSi
     // while it is (buffering-label.js capLock).
     const [graceOpen, setGraceOpen] = useState(false);
     useEffect(() => () => graceHoldRef.current.dispose(), []);
-    // streamStarted is tracked via a ref, not state — the value is only
-    // read to gate the one-shot Umami event below, never to drive UI, so
-    // a re-render on transition would be pure overhead.
     const streamStartFiredRef = useRef(false);
-    const poster = videoEl.getAttribute('poster');
     const resourceID = videoEl.dataset.resourceId;
     const path = videoEl.dataset.path;
 
-    const restartNoteRef = useRef(undefined);
-    const autoplayHeldRef = useRef(false);
-    if (restartNoteRef.current === undefined) {
-        restartNoteRef.current = restartState || takeNote(safeSessionStorage(), resourceID, path);
-        if (restartNoteRef.current && restartNoteRef.current.grace && graceDurationSec) {
-            graceShownRef.current = true;
-            videoEl.dataset.graceCtaShown = '';
-            videoEl.dataset.graceCtaAnswered = restartNoteRef.current.grace;
-        }
-        if (restartNoteRef.current && ((restartState && restartNoteRef.current.at > 0) || !restartNoteRef.current.play) && videoEl.autoplay) {
-            videoEl.autoplay = false;
-            autoplayHeldRef.current = true;
-        }
-    }
-    const backgroundRestartRef = useRef(null);
-    const restartLate = useRef({ start: () => {} });
-    const [backgroundRestarting, setBackgroundRestarting] = useState(false);
-    useEffect(() => () => backgroundRestartRef.current?.dispose(), []);
+    const features = parseFeatures(settings, isVideo);
 
-    // The viewer's subtitle delay (cue-offset.js setTrackDelay): seconds,
-    // positive = later, remembered per file. Element-backed tracks only --
-    // subtitles muxed into the film are timed by the film and hls.js owns
-    // their cues.
-    const delayKey = resourceID && path ? `${resourceID}:${path}` : '';
-    const [subDelay, setSubDelayState] = useState(() => normalizeDelay(loadSubtitleDelay(delayKey)));
-    const subDelayRef = useRef(subDelay);
-    subDelayRef.current = subDelay;
-    const [toast, setToast] = useState(null); // { text, n }
-    const toastTimerRef = useRef(null);
-    const showToast = useCallback((text) => {
-        setToast({ text, n: Date.now() });
-        if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
-        toastTimerRef.current = setTimeout(() => setToast(null), 1200);
-    }, []);
-    useEffect(() => () => { if (toastTimerRef.current) clearTimeout(toastTimerRef.current); }, []);
-    const formatDelay = (d) => `${d > 0 ? '+' : d < 0 ? '\u2212' : ''}${Math.abs(d).toFixed(2)}`;
-    // Telemetry (player-telemetry.js): one event per decision.
-    const delayEventRef = useRef(null);
-    if (!delayEventRef.current) delayEventRef.current = settled((v) => track('subtitle-delay', v), 2000);
-    const tapEventRef = useRef(null);
-    if (!tapEventRef.current) tapEventRef.current = settled((v) => track('player-tap-seek', v), 900);
-    useEffect(() => () => { delayEventRef.current.flush(); tapEventRef.current.flush(); }, []);
+    // The film's clock and state, from the element's own events. movi-player
+    // answers the HTMLMediaElement surface, so this is the hook a <video>
+    // had; its own controls are not drawn (movi-player draws them).
+    const state = usePlayerState(videoRef, containerRef, { duration, seekOffset: 0, seeking: false });
 
-    const changeSubDelay = useCallback((next, { announce = true } = {}) => {
-        const d = normalizeDelay(next);
-        subDelayRef.current = d;
-        setSubDelayState(d);
-        saveSubtitleDelay(delayKey, d);
-        if (announce) showToast(tf('player.subtitleDelayToast', formatDelay(d)));
-        // `announce` is true for the keys and false for the dialog's buttons.
-        delayEventRef.current.push({ delay: d, source: announce ? 'key' : 'dialog' });
-    }, [delayKey, showToast]);
-
-    // The stream's URL: the last real one the element held (stream-url.js).
-    // Not re-read raw on every render: hls.js on a ManagedMediaSource puts
-    // its own blob: <source> in the element, and handing that to useHls
-    // killed the player in Safari on a Mac. A new real URL (the next item
-    // swapping the <source>) still counts.
-    const lastSourceUrl = useRef(null);
-    const renderedUrl = readStreamUrl(videoEl);
-    if (renderedUrl) lastSourceUrl.current = renderedUrl;
-    const sourceUrl = lastSourceUrl.current;
-
-    // Parse features from settings
-    const features = parseFeatures(settings, isVideo, duration, isSession);
-
-    // Fetch initial seek offset from transcoder session
-    useEffect(() => {
-        if (!isSession || !sessionSeekUrl) return;
-        fetch(sessionSeekUrl)
-            .then(r => r.json())
-            .then(data => {
-                if (data.offset > 0) setSeekOffset(data.offset);
-            })
-            .catch(() => {}); // ignore — offset stays 0
-    }, []);
-
-    // Element-backed subtitle tracks (user uploads, OpenSubtitles, external)
-    // carry cues in absolute movie time, while a transcoder session that
-    // starts mid-movie (resume, seek) exposes a timeline that begins at
-    // zero. Shift the cues by the session offset — and re-shift tracks that
-    // finish loading later ('load' doesn't bubble, so listen in capture;
-    // this also covers tracks added mid-session from the My Subtitles tab).
-    // Not only for sessions since 2026-09-20: the viewer's subtitle delay
-    // (below) shifts the same cues, and a direct stream has offset 0.
-    useEffect(() => {
-        const video = videoRef.current;
-        if (!video) return;
-        const applyAll = () => {
-            for (const el of video.querySelectorAll('track')) {
-                if (!el.track) continue;
-                setTrackDelay(el.track, subDelayRef.current);
-                applyCueOffset(el.track, seekOffset);
-            }
-        };
-        applyAll();
-        // The ref, not the closure's `seekOffset`: a seek sets the ref at
-        // once (onSeekOffsetChange) while this effect re-subscribes a render
-        // later, and a <track> that loads in between was shifted by the OLD
-        // run's offset -- minutes off, on a resume from 0.
-        const onTrackLoad = (e) => {
-            if (e.target.tagName === 'TRACK' && e.target.track) {
-                setTrackDelay(e.target.track, subDelayRef.current);
-                applyCueOffset(e.target.track, seekOffsetRef.current);
-            }
-        };
-        video.addEventListener('load', onTrackLoad, true);
-        return () => video.removeEventListener('load', onTrackLoad, true);
-    }, [seekOffset, isSession, subDelay]);
-
-    // Movie time is video.currentTime + the session offset (see
-    // applyCueOffset in cue-offset.js for the same arithmetic on cues).
-    // Mirrored into a ref because the poll callbacks are built once and
-    // would otherwise read the offset the run started with.
-    const seekOffsetRef = useRef(0);
-    seekOffsetRef.current = seekOffset;
-    // And onto the element, for the code outside this component that needs
-    // movie time (activateSubtitle's first request for a translation, the
-    // transfer status's grace window: lib/playerActivity.js inGrace).
-    if (videoEl) videoEl.dataset.runOffset = String(seekOffset);
-    // The keyboard handler is declared before the toggle wrapper it must
-    // call (see togglePlay below), so it goes through this.
-    const togglePlayRef = useRef(() => {});
-    // --- AI subtitle translation ------------------------------------
-    // The run, its progress poll, the catch-up hold and everything that
-    // decides them live in hooks/useSubtitleTranslation.js. Called HERE, where
-    // that code used to stand, so its effects keep their place in the
-    // component's effect order. `late` carries what is only declared further
-    // down (the hls.js instance, the on-screen offer): the hook reads it when
-    // it acts, never while rendering.
-    const late = useRef({ hlsRef: null, withdrawOffer: () => {}, redecideOffer: () => {} });
-    const translation = useSubtitleTranslation({
-        videoRef, videoEl, trackContainer, trackHooks, seekOffset, seekOffsetRef, sessionSeekingRef, late,
-    });
-    const {
-        catchUp, preHolding, manualSubtitleRef,
-        kickTranslationPoll, onSeekSettled, onDirectSeek, cancelPreHold,
-        handleWait, handleKeepWatching, handleDismissCatchUp,
-    } = translation;
-
-    // Sync ref with state for use in closures that don't re-bind
-    const setSessionSeekingWithRef = useCallback((val) => {
-        sessionSeekingRef.current = val;
-        setSessionSeeking(val);
-    }, []);
-
-    // Player state hook
-    const state = usePlayerState(videoRef, containerRef, { duration, seekOffset, seeking: sessionSeeking, initialTime: restartNoteRef.current?.at || 0, mediaState: restartState?.media });
-
-    // HEVC passthrough (passthrough.js, docs/player.md "Passthrough: errors
-    // and fallback"): only where the transcoder passes this stream's video
-    // through. A guard that watches hls.js, the element and the picture, and
-    // gives the file up to the old route at most once -- the same way the
-    // "Compatibility mode" item does. Every other stream gets none of it.
-    const passthroughRoute = isVideo && videoEl.dataset.videoRoute === 'passthrough';
-    // The stream restart after a lost session (below, stream-restart.js):
-    // declared here, since a guard's restart and ours read each other -- one
-    // owner of what the viewer sees. A restart of ours on its way leaves the
-    // guard's out: the page is being started again anyway.
-    const recoverPolicyRef = useRef(null);
-    const ownRestart = () => !!(recoverPolicyRef.current?.restarting || backgroundRestartRef.current?.engaged);
-    const passthroughGuardRef = useRef(null);
-    if (passthroughRoute && !passthroughGuardRef.current) {
-        passthroughGuardRef.current = createPassthroughGuard({
-            video: videoEl,
-            // audio: the failure is charged to the audio the declaration
-            // made (multichannel audio) -- the restart keeps the video's
-            // route and leaves that audio out.
-            fallback: (reason, path, audio, by) => {
-                if (ownRestart()) return;
-                if (audio) fallbackAudio({ video: videoEl, reason, path, cls: audio, by, restart: (fallback) => restartLate.current.start({ fallback }) });
-                else fallbackToOldRoute({ video: videoEl, reason, path, restart: (fallback) => restartLate.current.start({ fallback }) });
-            },
-        });
-    }
-    // Multichannel audio on every other route (passthrough.js
-    // createAudioGuard): only where this start declared an audio token. A
-    // start that declared none -- a browser opted out with ?audio=off, one
-    // that answered no audio token, a start with no declaration -- gets no
-    // guard, and its errors are handled as they always were.
-    const audioGuardRef = useRef(null);
-    if (isVideo && !passthroughRoute && declaresAudio(videoEl.dataset.decode) && !audioGuardRef.current) {
-        audioGuardRef.current = createAudioGuard({
-            video: videoEl,
-            fallback: (reason, path, audio, by, place) => {
-                if (!ownRestart()) fallbackAudio({ video: videoEl, reason, path, cls: audio, by, restart: (fallback) => restartLate.current.start({ fallback, position: { at: place.at + seekOffsetRef.current, play: place.play }, fixedPosition: true }) });
-            },
-        });
-    }
-    // A stream nginx-vod serves as the source is (~vod/) whose codecs this
-    // browser refuses: given up at once and restarted to the transcoder
-    // (vod-guard.js), not recovered for ever. It shares the old route's guard
-    // slot with the audio guard, asked first.
-    const vodGuardRef = useRef(null);
-    if (isVideo && !passthroughRoute && isVodStream(renderedUrl) && !vodGuardRef.current) {
-        vodGuardRef.current = createVodGuard({
-            giveUp: (details, mime) => {
-                if (!ownRestart()) fallbackToTranscoder({ video: videoEl, mime, restart: (fallback) => restartLate.current.start({ fallback }) });
-            },
-        });
-    }
-    const oldRouteGuardRef = useRef(null);
-    if (!oldRouteGuardRef.current) oldRouteGuardRef.current = composeGuards(vodGuardRef.current, audioGuardRef.current);
-    useEffect(() => () => {
-        if (passthroughGuardRef.current) passthroughGuardRef.current.dispose();
-        if (audioGuardRef.current) audioGuardRef.current.dispose();
-    }, []);
-    // A player is up: a restart after a failed passthrough, if one was
-    // pending, has happened -- its fields must not ride on the next start
-    // (decode-declaration.js setPendingFallback).
-    useEffect(() => { clearPendingFallback(window); }, []);
-
-    // ---- a stream whose transcoder session is gone -------------------------
-    //
-    // hls.js's network errors that nothing can load again -- a dead
-    // session's answer, fatal or not, and a failure that outlasted the
-    // retries (network-recovery.js) -- and a session seek that finds the
-    // session gone (session-seek.js onSessionGone) end here, never in a
-    // blind startLoad(): the stream is restarted at the viewer's place in the
-    // film, at most once in five minutes per file, and past that -- or where
-    // nothing can be loaded again -- the card with one button, once the film
-    // has nothing left to play (stream-restart.js createRecoveryPolicy;
-    // docs/player.md "Network errors and the stream restart").
-    //
-    // This player may BE such a restart: the note says where the last one
-    // stood, and the resume below goes there without asking. Its grace-popup
-    // answer, if the viewer gave one, is this element's too: the popup is not
-    // shown again, and the transfer status and the buffering label read the
-    // answer where they read it on every player (data-grace-cta-answered,
-    // lib/playerActivity.js offerAnswered; data-grace-cta-shown: the popup is
-    // not "on its way").
-    //
-    // A film that was paused comes back paused (the note's `play: false`),
-    // and the element's own `autoplay` must not start it: at mount, and
-    // again when the resume's session seek reloads the element (hls.js
-    // loadSource re-attaches it, and a reload re-arms autoplay). That was
-    // every paused restart in Chrome (5 of 5, playing by itself 1.7-2.5 s
-    // after the restart's POST): a viewer who paused and left the tab got
-    // the film's sound from it after a transcoder rollout. So `autoplay` is
-    // off from here -- before hls.js attaches -- until the viewer's own Play
-    // (the effect below puts it back); the resume's seek lands paused
-    // (session-seek.js landsPaused) and the exact place waits for that Play
-    // (exactRestartPlace).
-    // The viewer's Play: the element is as every other again (a later paused
-    // session seek plays its new run by itself, as everywhere).
-    useEffect(() => {
-        if (!autoplayHeldRef.current) return undefined;
-        const back = () => {
-            autoplayHeldRef.current = false;
-            videoEl.autoplay = true;
-        };
-        videoEl.addEventListener('play', back, { once: true });
-        return () => videoEl.removeEventListener('play', back);
-    }, []);
-    // The purge field the restart put on the page's start form has done its
-    // work: the viewer's next press of the button is an ordinary start.
-    useEffect(() => { clearPurgeMarks(document); }, []);
-    const [recoverCard, setRecoverCard] = useState(null);
-    // What the policy needs from further down (the watch history, the next
-    // file): filled in there, read when it acts.
-    const recoverLate = useRef({ restart: () => {}, leaving: () => false });
-    // The player-dead watch (below): once it has declared this player dead,
-    // the player is its, and ours reads so.
-    const deadWatchRef = useRef(null);
-    // The element starves -- playing and nothing ahead to play, or paused by
-    // the viewer. Not a pause of the page's own: a session seek's (its run
-    // is on its way) or the grace popup's hold (its answer plays on). Ended
-    // is not starving either: the film is over, the next file's card is up.
-    const starving = () => {
-        const v = videoRef.current;
-        if (!v || v.ended) return false;
-        if (sessionSeekingRef.current || graceHoldRef.current.isActive()) return false;
-        return !!v.paused || (v.readyState || 0) < 3;
-    };
-    if (!recoverPolicyRef.current) {
-        recoverPolicyRef.current = createRecoveryPolicy({
-            storage: safeSessionStorage(),
-            key: restartKey(resourceID, path),
-            // The grace popup up, or on its way (the film past the window
-            // and the popup not shown yet: it comes from a render effect):
-            // its answer first (grace-hold.js), then the restart.
-            graceBlocks: (at) => {
-                if (graceHoldRef.current.isActive()) return true;
-                if (!graceDurationSec || graceShownRef.current) return false;
-                return at >= graceDurationSec && !!document.querySelector('#grace-cta');
-            },
-            leaving: () => recoverLate.current.leaving(),
-            // One owner of what the viewer sees: a guard that has begun its
-            // own restart (passthrough.js: the old route, or the file without
-            // its multichannel audio -- the audio guard also stops and
-            // detaches hls.js), or player-dead's verdict on a player that
-            // never started (dead-player.js: a player dead for a reason of
-            // its own, which a new session would not cure) -- until it plays
-            // after all (player-revived). Then nothing of ours: no restart,
-            // no card.
-            blocked: () => backgroundRestartRef.current?.engaged ? !backgroundRestartRef.current.failed : !!((passthroughGuardRef.current && passthroughGuardRef.current.done)
-                || (audioGuardRef.current && audioGuardRef.current.done)
-                || (deadWatchRef.current && deadWatchRef.current.dead)),
-            // The card waits while the film plays from its buffer.
-            playingFromBuffer: () => !starving(),
-            whenStarving: (fn) => {
-                const v = videoRef.current;
-                if (!v) return () => {};
-                const check = () => { if (starving()) fn(); };
-                const evs = ['waiting', 'stalled', 'pause', 'timeupdate', 'emptied'];
-                for (const ev of evs) v.addEventListener(ev, check);
-                return () => { for (const ev of evs) v.removeEventListener(ev, check); };
-            },
-            position: () => {
-                const v = videoRef.current;
-                return { at: ((v && v.currentTime) || 0) + seekOffsetRef.current, play: !!v && !v.paused };
-            },
-            restart: (pos) => recoverLate.current.restart(pos),
-            stopLoad: () => {
-                const h = hlsRef.current;
-                if (h && typeof h.stopLoad === 'function') h.stopLoad();
-            },
-            // Paused under the card: the film cannot go on, and the controls
-            // should not say it does.
-            showCard: (card) => {
-                const v = videoRef.current;
-                if (v && !v.paused && typeof v.pause === 'function') v.pause();
-                setRecoverCard(card);
-                // The viewer's own press of the page's button next goes past
-                // the job cache too (stream-restart.js markNextStart): its
-                // job, replayed, is this one with the dead session in it.
-                try { markNextStart({ win: window, doc: document, video: videoEl, root: trackContainer }); } catch (e) { /* the card still shows */ }
-                // The card is due before the first frame too (a restarted
-                // job whose new session is dead at its first request): the
-                // page that keeps the rendered player hidden until
-                // player_ready (app/action.js) shows it now -- the card is
-                // the one message, and it must be seen.
-                window.dispatchEvent(new CustomEvent('player_show'));
-            },
-            // The film loads again under it after all: the card goes, and
-            // the controls, the pill and the big play button are back -- and
-            // the page's next start is an ordinary one again.
-            hideCard: () => {
-                setRecoverCard(null);
-                clearPurgeMarks(document);
-            },
-            track,
-        });
-    }
-    useEffect(() => () => recoverPolicyRef.current.dispose(), []);
-    const recoveryRef = useRef(null);
-    if (!recoveryRef.current) {
-        recoveryRef.current = {
-            // info.via: 'load' (a fatal error) or 'error-nonfatal' (an answer
-            // hls.js would have asked again); info.loader: which one asked.
-            onSessionGone: (reason, status, info = {}) => recoverPolicyRef.current.sessionGone(
-                reason, status, null, info.via || 'load', info.loader || ''),
-            onGiveUp: (status) => recoverPolicyRef.current.giveUp(status),
-            // The old route's fatal media errors, recovered and then given
-            // up (media-recovery.js): the same card.
-            onMediaGiveUp: () => recoverPolicyRef.current.mediaGiveUp(),
-            onFilmLoaded: () => recoverPolicyRef.current.resumed(),
-        };
-    }
-
-    // The same fragment loaded again and again (fragment-loop.js): one
-    // Umami event with what looped, and a passthrough the old route plays
-    // given up to it (loopGivesUp; reason fragment_loop, striking nothing:
-    // the file's fault, not the decoder's). Anywhere else the event is all.
-    const loopRef = useRef(null);
-    if (!loopRef.current) {
-        loopRef.current = {
-            onLoop: ({ type, sn, level, loads }) => {
-                const fallback = !!passthroughGuardRef.current && loopGivesUp(videoEl);
-                track('fragment-loop', {
-                    type, sn, level, loads, fallback,
-                    route: videoEl.dataset.videoRoute || '',
-                    cls: videoEl.dataset.videoClass || '',
-                    audio: startAudioClass(videoEl),
-                });
-                if (fallback) passthroughGuardRef.current.fire('fragment_loop');
-            },
-        };
-    }
-
-    // HLS hook
-    const hlsRef = useHls(videoRef, sourceUrl, {
-        passthrough: passthroughRoute
-            ? { fragLoadMs: parseInt(videoEl.dataset.fragLoadMs || '0', 10) || 0, guard: passthroughGuardRef.current }
-            : null,
-        audioGuard: oldRouteGuardRef.current,
-        recovery: recoveryRef.current,
-        loop: loopRef.current,
-    });
-
-    // Re-assert the picker's answer on hls.js's own transitions.
-    //
-    // hls.js selects subtitle tracks by itself: every textTracks `change`
-    // event makes its SubtitleTrackController re-scan the element's tracks
-    // and adopt one (see subtitle-apply.js). Our own mode writes are change
-    // events, so a selection applied once can be taken away a tick later —
-    // measured on stage as an embedded track loading cues and drawing them
-    // over the AI subtitle the viewer had chosen, while `subtitleTrack` read
-    // -1 and `subtitleDisplay` false.
-    //
-    // Only a side-loaded or "None" selection is guarded, and only when what
-    // hls.js is actually doing disagrees with it. An embedded selection
-    // needs no guard because it is self-healing: it leaves hls.js's own
-    // track 'showing', which is exactly what onTextTracksChanged finds and
-    // re-adopts — the same index, so nothing changes. The one transition
-    // that does lose it is loadSource, and the seeker re-applies there.
-    //
-    // Two things make this terminate. The disagreement check: an apply
-    // writes modes, the modes wake hls.js, hls.js calls back, and the
-    // second pass finds the state already correct. And, for the pass that
-    // does not get that far, applySubtitleSelection's own re-entrancy
-    // guard — hls.js triggers SUBTITLE_TRACK_SWITCH synchronously from
-    // inside the write, so this listener runs nested in the apply that is
-    // still only half-finished.
-    useEffect(() => {
-        const hls = hlsRef.current || window.hlsPlayer;
-        if (!hls || typeof hls.on !== 'function' || !Hls || !Hls.Events) return;
-        const reassert = () => {
-            const selection = readSelection(trackContainer || document);
-            if (!selection || isEmbedded(selection)) return;
-            const video = videoRef.current;
-            if (selectionHolds(video, hls, selection)) return;
-            applySubtitleSelection(video, hls, selection);
-        };
-        const events = [Hls.Events.SUBTITLE_TRACK_SWITCH, Hls.Events.SUBTITLE_TRACKS_UPDATED];
-        for (const e of events) hls.on(e, reassert);
-        return () => {
-            if (typeof hls.off !== 'function') return;
-            for (const e of events) hls.off(e, reassert);
-        };
-        // sourceUrl, because useHls destroys and re-creates the instance
-        // when it changes, and the listeners have to move with it. That
-        // effect is declared above this one, so the new instance is already
-        // in the ref by the time this re-runs.
-    }, [trackContainer, sourceUrl]);
-
-    // A player that never starts says so (dead-player.js): an Umami event,
-    // nothing the viewer sees. A restart a guard has begun is the guard's.
-    // Nor one the stream restart has taken over (stream-restart.js engaged:
-    // a restart gone out, its card up or waiting, a restart waiting for the
-    // grace popup): that player is not dead, it is being replaced or has
-    // said so itself -- one message, not two.
-    useEffect(() => {
-        const w = createDeadPlayerWatch({
-            video: videoEl,
-            getHls: () => hlsRef.current,
-            Hls,
-            handled: () => !!((passthroughGuardRef.current && passthroughGuardRef.current.done)
-                || (audioGuardRef.current && audioGuardRef.current.done)
-                || (vodGuardRef.current && vodGuardRef.current.done)
-                || (recoverPolicyRef.current && recoverPolicyRef.current.engaged)),
-            track,
-        });
-        deadWatchRef.current = w;
-        return w.dispose;
-    }, []);
-
-    // Resume prompt state — must be declared before useWatchHistory which reads it.
+    // Resume prompt state -- must be declared before useWatchHistory which reads it.
     const [showResumePrompt, setShowResumePrompt] = useState(false);
     // The viewer has answered the resume prompt (either way). Until then a
     // film with a saved position is held: see the hold effect below.
     const [resumeAnswered, setResumeAnswered] = useState(false);
     // The same fact for the hold's 'play' listener: the answer calls play()
     // at once, and that event lands before the effect cleanup that would
-    // take the listener off -- state alone would pause the film the viewer
-    // just started.
+    // take the listener off.
     const resumeAnsweredRef = useRef(false);
     const autoResumeRef = useRef(false);
 
-    // Watch history hook (position tracking + resume).
-    // `paused` prevents overwriting saved position while resume prompt is open.
     // Where the credits begin (credits.js), filled in further down. Declared
     // here because the watch history reports it with every position.
     const creditsAtRef = useRef(null);
@@ -616,21 +116,17 @@ function PlayerComponent({ videoEl, settings, containerEl, showControls, fixedSi
         duration: state.duration,
         playing: state.playing,
         paused: showResumePrompt,
-        // A restart of this player's own (stream-restart.js): its note is the
-        // position, not the server's copy.
-        resumeFrom: restartNoteRef.current ? restartNoteRef.current.at : undefined,
     });
 
     // A settings change that re-renders the player (the preferred language,
-    // preferred-lang.js) calls this first: the position is saved now, not at
-    // the next periodic write, and the player that comes back is told to
-    // continue from it without asking.
+    // preferred-lang.js) calls this first: the position is saved now, and the
+    // player that comes back continues from it without asking.
     useEffect(() => {
         if (!trackHooks) return undefined;
         trackHooks.beforeRestart = () => {
             const video = videoRef.current;
             if (!video) return;
-            const at = (video.currentTime || 0) + seekOffsetRef.current;
+            const at = video.currentTime || 0;
             const dur = duration > 0 ? duration : (video.duration || 0);
             if (!(at > 0) || !(dur > 0)) return;
             forceSendPosition(at, dur);
@@ -639,409 +135,72 @@ function PlayerComponent({ videoEl, settings, containerEl, showControls, fixedSi
         return () => { trackHooks.beforeRestart = null; };
     }, [trackHooks, duration, forceSendPosition, resourceID, path]);
 
-    // The seek has settled (the new run is playing): ask the service where
-    // the translation is now, rather than on the next 3 s tick, so a hold
-    // for the new position's subtitles starts within one request.
-    const onSessionSeekingChange = useCallback((val) => {
-        setSessionSeekingWithRef(val);
-        if (!val && pendingResumeRef.current !== null) {
-            // The resume prompt was answered during this seek (handleResume).
-            // Its seek replaces this one's settle: no hold window for a run
-            // that is being left.
-            const at = pendingResumeRef.current;
-            pendingResumeRef.current = null;
-            handleSeekRef.current(at, { play: true });
-            return;
-        }
-        if (val) return;
-        onSeekSettled();
-    }, [setSessionSeekingWithRef, onSeekSettled]);
-
-
-    // ---- the on-screen translation offer (subtitle-offer.js) ----------
-    //
-    // Decided once, on the first play: the pill is about "this film has no
-    // subtitles in your language", and that is a property of the page the
-    // server rendered, not something to re-ask on every resume. Reading it
-    // at first play rather than at mount keeps it off a page that never
-    // plays (autoplay blocked, resume prompt up) and gives the mount-time
-    // restore of a saved translation time to make the chip the default --
-    // which withdraws the offer by pickOffer's own rule.
-    const [offer, setOffer] = useState(null);
-    const [offerLingering, setOfferLingering] = useState(false);
-    const [offerCard, setOfferCard] = useState(false);
-    const offerArmedRef = useRef(false);
-    // Bumped when the dialog is re-rendered for another language, so the
-    // offer below is decided again.
-    const [dialogVersion, setDialogVersion] = useState(0);
-    const offerTimerRef = useRef(null);
-    // What the translation hook needs from further down than its call site.
-    late.current.hlsRef = hlsRef;
-    late.current.withdrawOffer = () => { setOffer(null); setOfferCard(false); };
-    late.current.redecideOffer = () => { offerArmedRef.current = false; setDialogVersion((v) => v + 1); };
-
-    const trackOffer = useCallback((name, o, extra) => {
-        if (window.umami) window.umami.track(name, { lang: o.lang, kind: o.kind, ...(extra || {}) });
-    }, []);
-
-    useEffect(() => {
-        if (!isVideo || !state.playing || offerArmedRef.current) return;
-        // Not under the resume prompt: <video autoplay> can get a moment of
-        // playback in before the saved position arrives, and a pill decided
-        // then would spend its ten seconds behind the prompt's overlay.
-        if (!resumeReady || (resumePosition > 0 && !resumeAnswered)) return;
-        offerArmedRef.current = true;
-        const modal = findSubtitlesModal(trackContainer);
-        if (!modal) return;
-        const next = pickOffer(readChips(modal));
-        if (!next || !next.label) return;
-        if (next.kind === 'upsell' && upsellSuppressed(offerStorage(), Date.now())) return;
-        setOffer(next);
-        setOfferLingering(true);
-        offerTimerRef.current = setTimeout(() => setOfferLingering(false), offerTiming.lingerMs);
-        trackOffer('subtitle-offer-shown', next);
-    }, [state.playing, isVideo, trackContainer, trackOffer, resumeReady, resumePosition, resumeAnswered, dialogVersion]);
-
-    useEffect(() => () => { if (offerTimerRef.current) clearTimeout(offerTimerRef.current); }, []);
-
-    const handleOfferClick = useCallback(() => {
-        if (!offer) return;
-        trackOffer('subtitle-offer-click', offer);
-        if (offer.kind === 'upsell') {
-            setOfferCard((open) => !open);
-            return;
-        }
-        // Taking the offer IS pressing the chip: the same delegated handler,
-        // so the same PUT, the same marks, the same poll. The chip is asked
-        // again whether it is still on offer -- an audio switch or a manual
-        // pick may have spent it since the pill was decided.
-        const modal = findSubtitlesModal(trackContainer);
-        const el = modal ? findSubtitleItem(modal, offer.id) : null;
-        setOffer(null);
-        if (el && el.getAttribute('data-offered') === 'true') el.click();
-    }, [offer, trackContainer, trackOffer]);
-
-    // how: 'close' (the ×), 'later' (Not now), 'never' (Don't offer).
-    // Only the upsell is remembered; see subtitle-offer.js.
-    const handleOfferDismiss = useCallback((how) => {
-        if (!offer) return;
-        if (offer.kind === 'upsell') suppressUpsell(offerStorage(), Date.now(), { never: how === 'never' });
-        trackOffer('subtitle-offer-dismiss', offer, { how });
-        setOffer(null);
-        setOfferCard(false);
-    }, [offer, trackOffer]);
-
-    // How seeks in a session split between "inside the run" and "new FFmpeg".
-    // Counted and sent once the seeking stops: a held arrow key is thirty
-    // seeks a second, and an event for each would be a flood saying one thing.
-    const seekCountsRef = useRef({ local: 0, session: 0 });
-    const seekEventRef = useRef(null);
-    if (!seekEventRef.current) {
-        seekEventRef.current = settled(() => {
-            const c = seekCountsRef.current;
-            seekCountsRef.current = { local: 0, session: 0 };
-            track('player-seek', c);
-        }, 5000);
-    }
-    const countSeek = (kind) => {
-        seekCountsRef.current[kind] += 1;
-        seekEventRef.current.push(true);
-    };
-    useEffect(() => () => seekEventRef.current.flush(), []);
-
-    // A stream restart's exact place (stream-restart.js, local-seek.js
-    // exactPlace): the run the restart's resume seek starts is the
-    // transcoder's quantized one, up to 30 s before where the viewer was.
-    // Once that run has written the place, the film goes there by a plain
-    // currentTime write -- no second session seek. Any seek of the viewer's
-    // (handleSeek) cancels it: their seek is the place now.
-    const restartTargetRef = useRef(null);
-    const restartTimerRef = useRef(null);
-    const stopRestartTarget = () => {
-        restartTargetRef.current = null;
-        if (restartTimerRef.current !== null) {
-            clearInterval(restartTimerRef.current);
-            restartTimerRef.current = null;
-        }
-    };
-    useEffect(() => stopRestartTarget, []);
-
-    // Seek handler (session or direct)
-    const handleSeek = useCallback((time, { play = false, restore = false } = {}) => {
-        if (sessionSeekingRef.current) return;
-        stopRestartTarget();
-        audioGuardRef.current?.clearRestartPlace();
-        backgroundRestartRef.current?.seeking();
-        // The target of an earlier seek that found the session gone is no
-        // longer where the viewer is (stream-restart.js, the viewer's place):
-        // this seek is -- a local one by moving the element, a session one
-        // by its own report if it finds the session gone too.
-        recoverPolicyRef.current.seeking();
-        if (isSession && sessionSeekUrl) {
-            // Inside the run that is playing? Then it is a plain seek
-            // (local-seek.js): no POST, no new FFmpeg, no frozen frame. The
-            // offset does not change, so cues and the translation's timeline
-            // stay where they are; the rest is what a direct seek does.
-            const video = videoRef.current;
-            const local = video ? localSeekTarget(time, seekOffsetRef.current, producedEnd(video, hlsRef.current)) : null;
-            if (local !== null) {
-                state.setCurrentTime(time, { restore });
-                video.currentTime = local;
-                if (play && video.paused) video.play().catch(() => {});
-                onDirectSeek();
-                countSeek('local');
-                return;
-            }
-            countSeek('session');
-            // Immediately show target position on timeline
-            state.setCurrentTime(time, { restore });
-            // Lazily create session seeker (works with HLS.js or native HLS)
-            if (!sessionSeekerRef.current) {
-                sessionSeekerRef.current = createSessionSeeker({
-                    hls: hlsRef.current, // null for native HLS (iOS)
-                    videoEl,
-                    sessionSeekUrl,
-                    sourceUrl,
-                    onSeekOffsetChange: (offset) => {
-                        setSeekOffset(offset);
-                        // Now, not on the next render: the kick below polls
-                        // with it, and the answer is judged against it --
-                        // and the element's copy is read by code outside
-                        // this component (the transfer status's grace window,
-                        // lib/playerActivity.js inGrace) on the source
-                        // restart's own events, before any render.
-                        seekOffsetRef.current = offset;
-                        videoEl.dataset.runOffset = String(offset);
-                        kickTranslationPoll();
-                    },
-                    onSeekingChange: onSessionSeekingChange,
-                    trackContainer,
-                    // The grace popup up: the new run is loaded, not played,
-                    // until the viewer answers it (grace-hold.js).
-                    holdPlayback: () => graceHoldRef.current.holds(),
-                    // The POST found the session gone: the restart at the
-                    // seek's target (stream-restart.js).
-                    onSessionGone: (reason, status, pos) => {
-                        backgroundRestartRef.current?.seekFailed(pos.at);
-                        recoverPolicyRef.current.sessionGone(reason, status, pos, 'seek');
-                    },
-                });
-            }
-            if (sessionSeekerRef.current) {
-                sessionSeekerRef.current.seek(time, { play });
-            }
-        } else {
-            const video = videoRef.current;
-            if (video) {
-                const maxTime = video.duration && isFinite(video.duration) ? video.duration : time;
-                const target = Math.min(time, maxTime);
-                state.setCurrentTime(target, { restore });
-                video.currentTime = target;
-                // The same seek treatment a session gets, minus the
-                // transcoder round-trip: the poll is kicked with the new
-                // position and the hold window opens now — a direct seek
-                // has no `playing` settle to wait for. Unlike a session
-                // seek, nothing rations this path (no POST, no
-                // sessionSeeking guard), so the kick itself is: a held
-                // arrow key repeats the seek ~30 times a second, and each
-                // kick is an immediate HEAD.
-                onDirectSeek();
-            }
-        }
-    }, [isSession, sessionSeekUrl, sourceUrl, kickTranslationPoll, onSessionSeekingChange, onDirectSeek]);
-    handleSeekRef.current = handleSeek;
-
-    // exactRestartPlace arms the restart's exact place (above): checked every
-    // RESTART_CHECK_MS -- the run grows by itself, a paused film included --
-    // until the film stands within a second of the target, the viewer seeks,
-    // or RESTART_EXACT_MAX_MS have passed. `onPlay`: a paused restart -- the
-    // film stays where the resume's seek landed it, paused, and goes to the
-    // place when the viewer presses Play: the checks and their deadline start
-    // then (a viewer back after ten minutes still gets there), the first one
-    // at once.
-    const exactRestartPlace = (target, { onPlay = false } = {}) => {
-        stopRestartTarget();
-        if (!(target > 0)) return;
-        restartTargetRef.current = target;
-        let until = Date.now() + RESTART_EXACT_MAX_MS;
-        const check = () => {
-            const t = restartTargetRef.current;
-            const video = videoRef.current;
-            if (t === null || !video || Date.now() > until) {
-                stopRestartTarget();
-                return;
-            }
-            // The resume's own session seek is still out: its run is not
-            // the one to measure.
-            if (sessionSeekingRef.current) return;
-            const offset = seekOffsetRef.current;
-            const at = exactPlace(t, (video.currentTime || 0) + offset, offset, producedEnd(video, hlsRef.current));
-            if (at === null) return;
-            stopRestartTarget();
-            if (at === 'there') return;
-            video.currentTime = at;
-            state.setCurrentTime(t);
-            onDirectSeek();
-        };
-        const video = videoRef.current;
-        if (onPlay && video && video.paused) {
-            // A seek of the viewer's before it has dropped the target: the
-            // first check lets go (above).
-            video.addEventListener('play', () => {
-                until = Date.now() + RESTART_EXACT_MAX_MS;
-                restartTimerRef.current = setInterval(check, RESTART_CHECK_MS);
-                check();
-            }, { once: true });
-            return;
-        }
-        restartTimerRef.current = setInterval(check, RESTART_CHECK_MS);
-    };
-
-    // Auto-hide controls
-    const resetHideTimer = useCallback(() => {
-        setControlsVisible(true);
-        if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
-        if (isVideo) {
-            hideTimerRef.current = setTimeout(() => {
-                if (!videoRef.current?.paused) setControlsVisible(false);
-            }, 3000);
-        }
-    }, [isVideo]);
-
-    useEffect(() => {
-        resetHideTimer();
-        return () => { if (hideTimerRef.current) clearTimeout(hideTimerRef.current); };
-    }, []);
-
-    // Show controls on pause
-    useEffect(() => {
-        if (!state.playing) setControlsVisible(true);
-    }, [state.playing]);
-
-    // Stream-start Umami event — fires once per player session when playback
-    // actually advances past 5s (real engagement, not just press-play-and-bounce).
-    // Canonical denominator for share-rate analysis (share-resource events
-    // divided by stream-start sessions). No UI gating; the in-player share
-    // button is always visible.
+    // Stream-start Umami event -- once per player, when playback passes
+    // ENGAGEMENT_SECONDS. The denominator of share-rate analysis.
     useEffect(() => {
         if (streamStartFiredRef.current) return;
         if (state.currentTime < ENGAGEMENT_SECONDS) return;
         streamStartFiredRef.current = true;
         if (window.umami) window.umami.track('stream-start', {
             isVideo,
-            isSession,
             resourceID: resourceID || '',
-            // The transcoder session's route and its reason, and the
-            // declaration the start sent ('' where the element has none):
-            // the base the passthrough is measured against.
-            route: videoEl.dataset.videoRoute || '',
-            reason: videoEl.dataset.routeReason || '',
-            decl: videoEl.dataset.decode || '',
-            // The start's audio class (passthrough.js startAudioClass):
-            // none / aac51 / dolby -- the base audio-fallback and
-            // hevc-fallback are counted against, per class.
-            audio: startAudioClass(videoEl),
-            // The remembered settings this stream started with: `player-speed`
-            // counts changes, and a viewer who set 1.5x a week ago makes none.
+            player: 'movi',
             rate: videoRef.current ? videoRef.current.playbackRate : 1,
-            subtitleDelay: subDelayRef.current,
         });
         const modal = document.getElementById('subtitles');
-        // getLang(), not document.documentElement.lang: the embed
-        // layouts render <html> without a lang attribute, which would
-        // report every embedded play as having no UI language.
+        // getLang(), not document.documentElement.lang: the embed layouts
+        // render <html> without a lang attribute.
         const uiLang = getLang();
         if (!modal) return;
         const audioEl = modal.querySelector('.audio[data-default="true"]');
         const audioLang = audioEl ? (audioEl.getAttribute('data-srclang') || '') : '';
-        // The ladder ran on the preferred content language, so `needed`
-        // is measured against that one; the UI language only stands in
-        // when no preference is configured.
         const preferredLang = modal.getAttribute('data-preferred-lang') || '';
         if (window.umami) {
             window.umami.track('subtitle-resolved', {
                 ...resolveSubtitleLevel(readTracks(modal), uiLang, { audioLang, preferredLang }),
                 uiLang,
                 audioLang,
-                // "We never got an answer", not "there was none": the
-                // OpenSubtitles lookup was still warming up when this
-                // render was built, and the render is cached for ten
-                // minutes, so without this a level of 'none' would count
-                // as a file with no subtitles.
                 notReady: modal.getAttribute('data-subtitles-not-ready') === 'true',
             });
         }
-        // No AI auto-start here any more (owner, 2026-09-16). The player
-        // used to activate a server-defaulted translation once playback
-        // passed this gate; the server offers a translation now and never
-        // turns one on. A run begins on a click of the chip, on the switch
-        // restoring data-last-subtitle, or on the mount-time restore of a
-        // translation the viewer saved in an earlier session — all three
-        // are the viewer's own choice, and the last two are already cached.
-        // This effect is telemetry only.
-    }, [state.currentTime, isVideo, isSession, resourceID]);
+    }, [state.currentTime, isVideo, resourceID]);
 
-    // Grace soft CTA — fires once when movie-time crosses the grace window.
-    // The popup is server-rendered by the action template (stream_video.html)
-    // as a sibling of the player container, NOT inside containerRef — so we
-    // search globally. CTA is a per-page singleton (one player per action page).
-    // A native <dialog> since 2026-09-26, opened with showModal() like the
-    // captions dialog: the top layer shows it over a fullscreen player, so
-    // the viewer is no longer taken out of fullscreen for it.
-    // The film stops while the popup is up (owner, 2026-09-26) and goes on
-    // with the answer -- only if it was the popup that stopped it
-    // (grace-hold.js). A session seek past the window puts the popup up as
-    // it starts (the timeline shows the target at once): the seek has paused
-    // the film itself, and its new run is loaded, not played, until the
-    // answer (session-seek.js holdPlayback).
+    // Grace soft CTA -- once, when the film crosses the grace window. A native
+    // <dialog> rendered by the action template next to the player and opened
+    // with showModal(): the top layer shows it over a fullscreen player too.
+    // The film stops while it is up and goes on with the answer, only if it
+    // was the popup that stopped it (grace-hold.js).
     useEffect(() => {
         if (!graceDurationSec || graceShownRef.current) return;
         if (state.currentTime < graceDurationSec) return;
         const el = document.querySelector('#grace-cta');
         if (!el) return;
         graceShownRef.current = true;
-        // Up from here on (closed later or not): the transfer status has
-        // counted it as on its way since the element crossed the window
-        // (lib/playerActivity.js graceOfferDue) and now reads the popup
-        // itself.
+        // Up from here on: the transfer status reads the popup itself
+        // (lib/playerActivity.js graceOfferDue).
         videoEl.dataset.graceCtaShown = '';
         const hold = graceHoldRef.current;
         hold.start();
-        // A native <dialog> (stream_video.html), opened like the captions
-        // and embed dialogs: showModal() puts it in the top layer, over a
-        // fullscreen player too, so the viewer is not taken out of
-        // fullscreen for it, and nothing on the page clips it. Anything
-        // else (jsdom, a page rendered before the dialog markup) is shown
-        // by its class, as the popup used to be.
         const modal = typeof el.showModal === 'function';
         if (modal) {
             if (!el.open) el.showModal();
         } else {
-            // A plain element lives outside the fullscreen element and would
-            // stay invisible there: leave fullscreen first, as before.
             if (document.fullscreenElement) {
                 document.exitFullscreen().catch(() => {});
             }
             el.classList.remove('hidden');
         }
         setGraceOpen(true);
-        // `paused`: the popup stopped a playing film. A seek's run held
-        // behind it is known only at the answer (its `paused` below).
         if (window.umami) window.umami.track('grace-soft-cta-shown', { paused: hold.held() });
-        // `via`: the popup's own button, or Play (the key, the big button,
-        // a click on the picture, the headset) -- the answer "continue".
+        // `via`: the popup's own button, or Play -- the answer "continue".
         const hide = (action, via = 'button') => {
             if (graceAnswerRef.current !== hide) return;
             graceAnswerRef.current = null;
-            // The viewer's answer, on the element: they have just been told
-            // of the cap, so the transfer status sells the way out again
-            // only once they hit it -- this player's first real stall
-            // (lib/playerActivity.js offerAnswered), not the moment the
-            // popup closes. On the element, so the next file, a reload or
-            // another grace window starts without it. Before the film goes
-            // on: its first events are read against it. The buffering label
-            // reads it too, in the render setGraceOpen(false) brings: from
-            // here on every wait is the lock (buffering-label.js capLock).
+            videoEl.removeEventListener('play', onPlayAnswer);
+            // The viewer's answer, on the element: the transfer status sells
+            // the way out again only at this player's first real stall
+            // (lib/playerActivity.js offerAnswered), and the buffering label
+            // shows the lock from here on (buffering-label.js capLock).
             videoEl.dataset.graceCtaAnswered = action;
             if (modal) {
                 if (el.open) el.close();
@@ -1052,17 +211,19 @@ function PlayerComponent({ videoEl, settings, containerEl, showControls, fixedSi
             const paused = hold.held();
             hold.release({ play: via === 'play' });
             if (window.umami) window.umami.track('grace-soft-cta-click', { action, via, paused });
-            // A stream restart that waited for this answer goes now
-            // (stream-restart.js createRecoveryPolicy).
-            recoverPolicyRef.current.graceAnswered();
         };
         graceAnswerRef.current = hide;
+        // Play while the popup holds the film is the answer "continue"
+        // (grace-hold.js pauses it back; this answers for the viewer).
+        const onPlayAnswer = () => {
+            if (graceAnswerRef.current === hide && hold.isActive()) hide('continue', 'play');
+        };
+        videoEl.addEventListener('play', onPlayAnswer);
         const closeBtn = el.querySelector('.grace-cta-close');
         if (closeBtn) closeBtn.addEventListener('click', () => hide('dismiss'), { once: true });
         const contBtn = el.querySelector('.grace-cta-continue');
         if (contBtn) contBtn.addEventListener('click', () => hide('continue'), { once: true });
-        // Esc closes a modal dialog on its own; here it is the close button:
-        // the answer "dismiss", and the film goes on.
+        // Esc closes a modal dialog on its own; here it is the close button.
         if (modal) {
             el.addEventListener('cancel', (e) => {
                 e.preventDefault();
@@ -1071,93 +232,7 @@ function PlayerComponent({ videoEl, settings, containerEl, showControls, fixedSi
         }
     }, [state.currentTime, graceDurationSec]);
 
-    // Keyboard shortcuts
-    useEffect(() => {
-        function onKeyDown(e) {
-            if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
-            if (sessionSeeking) return;
-            // The grace popup up, waiting for its answer: a modal over the
-            // film. A key on one of its own buttons is that button's (space
-            // on the close is the close), and of the player's keys only Play
-            // (the answer "continue") and Next (the hold dropped) reach under
-            // it (docs/grace_token.md) -- the arrows moved the film under the
-            // popup, back into the window too.
-            if (graceAnswerRef.current) {
-                if (e.target.closest && e.target.closest('#grace-cta button, #grace-cta a')) return;
-                if (![' ', 'k', 'n', 'N'].includes(e.key)) return;
-            }
-            switch (e.key) {
-                case ' ':
-                case 'k':
-                    e.preventDefault();
-                    togglePlayRef.current();
-                    resetHideTimer();
-                    break;
-                case 'ArrowLeft':
-                    e.preventDefault();
-                    handleSeek(Math.max(0, state.currentTime - 15));
-                    resetHideTimer();
-                    break;
-                case 'ArrowRight':
-                    e.preventDefault();
-                    handleSeek(Math.min(state.duration, state.currentTime + 15));
-                    resetHideTimer();
-                    break;
-                case 'ArrowUp':
-                    e.preventDefault();
-                    state.setVolume(Math.min(1, state.volume + 0.1));
-                    resetHideTimer();
-                    break;
-                case 'ArrowDown':
-                    e.preventDefault();
-                    state.setVolume(Math.max(0, state.volume - 0.1));
-                    resetHideTimer();
-                    break;
-                case 'f':
-                    e.preventDefault();
-                    state.toggleFullscreen();
-                    resetHideTimer();
-                    break;
-                case 'm':
-                    e.preventDefault();
-                    state.toggleMute();
-                    resetHideTimer();
-                    break;
-                // The keys every player uses for speed (Shift+, / Shift+.);
-                // e.key is the produced character, so layouts agree.
-                // Next episode / track. Shift+N as well, the habit from YouTube.
-                case 'n':
-                case 'N':
-                    if (!next) break;
-                    e.preventDefault();
-                    goNext('key');
-                    break;
-                // Subtitle delay, VLC's keys: g earlier, h later.
-                case 'g':
-                case 'h':
-                    e.preventDefault();
-                    changeSubDelay(subDelayRef.current + (e.key === 'h' ? SUBTITLE_DELAY_STEP : -SUBTITLE_DELAY_STEP));
-                    resetHideTimer();
-                    break;
-                case '<':
-                case '>':
-                    if (!features.speed) break;
-                    e.preventDefault();
-                    {
-                        const next = stepRate(state.rate, e.key === '>' ? +1 : -1);
-                        state.setRate(next);
-                        showToast(rateLabel(next));
-                        if (next !== state.rate) track('player-speed', { rate: next, source: 'key' });
-                    }
-                    resetHideTimer();
-                    break;
-            }
-        }
-        document.addEventListener('keydown', onKeyDown);
-        return () => document.removeEventListener('keydown', onKeyDown);
-    }, [state.currentTime, state.duration, state.volume, state.rate, state.playing, sessionSeeking]);
-
-    // player_play / player_paused custom events
+    // player_play / player_paused custom events (the embed page's ads).
     useEffect(() => {
         let forcePaused = false;
         function onPlayerPaused() {
@@ -1166,11 +241,8 @@ function PlayerComponent({ videoEl, settings, containerEl, showControls, fixedSi
         }
         function onPlayerPlay() {
             forcePaused = false;
-            // The embed's page starts its player once it can play
-            // (app/embed/index.js startPlayer): autoplay by another name,
-            // and a paused film's restart holds it too (autoplayHeldRef).
-            if (autoplayHeldRef.current) return;
-            videoRef.current?.play().catch(() => {});
+            const r = videoRef.current?.play();
+            if (r && r.catch) r.catch(() => {});
         }
         function onPlaying() {
             if (forcePaused) videoRef.current?.pause();
@@ -1185,89 +257,61 @@ function PlayerComponent({ videoEl, settings, containerEl, showControls, fixedSi
         };
     }, []);
 
-    // Which codecs this viewer's browser decodes (codec-support.js,
-    // docs/player.md): the question for an HEVC/AV1 passthrough in the
-    // transcoder. Gated on the first frame, so the count is of viewers; the
-    // report itself waits for an idle moment and goes once a week per
-    // browser. What the stream is travels with it: the source's codec from
-    // the job's media probe, whether a transcoder session serves it, and
-    // which path plays it. The same stream facts go with playback-quality,
-    // the dropped/total frames after a minute of playback (once per page).
+    // player_ready on the first canplay, with the container's shape from the
+    // picture. A file movi-player cannot play never reaches canplay: its
+    // error screen (errordisplay) is what there is to see, so it reveals the
+    // player the same way -- the page keeps the rendered player hidden until
+    // one of the two (app/action.js, app/embed/index.js).
     useEffect(() => {
-        if (!isVideo) return;
-        const stream = () => ({
-            src: sourceCodec(videoEl.dataset.videoCodecs),
-            tc: isSession,
-            // The session's route: once the transcoder passes HEVC through,
-            // `tc` is true for both it and a re-encode, and the dropped
-            // frames of a software decoder (owner, 2026-09-27: the risk
-            // this event measures) are the passthrough ones. '' without it.
-            route: videoEl.dataset.videoRoute || '',
-            pl: playbackPath(hlsRef.current, sourceUrl),
-            emb: !!window._embedSettings,
-        });
-        const stopCodec = whenPlaying(videoEl, () => reportCodecSupport(stream()));
-        const stopQuality = watchPlaybackQuality(videoEl, stream);
-        // A release opened from Discover: what its name said against what
-        // the file is (lib/discover/release-check.js; never throws, so the
-        // effects after this one run whatever the tab's storage does).
-        const stopRelease = whenPlaying(videoEl, () => reportReleaseCheck(window, videoEl, sourceCodec(videoEl.dataset.videoCodecs)));
+        let dispatched = false;
+        const reveal = () => {
+            if (dispatched) return;
+            dispatched = true;
+            window.dispatchEvent(new CustomEvent('player_ready'));
+        };
+        function onCanPlay() {
+            if (videoEl.videoWidth && videoEl.videoHeight) {
+                containerEl.style.aspectRatio = `${videoEl.videoWidth} / ${videoEl.videoHeight}`;
+            }
+            reveal();
+        }
+        function onErrorDisplay(e) {
+            const d = (e && e.detail) || {};
+            track('player-error', { title: String(d.title || '').slice(0, 120), retry: !!d.canRetry, software: !!d.canTrySoftware });
+            window.dispatchEvent(new CustomEvent('player_show'));
+            reveal();
+        }
+        videoEl.addEventListener('canplay', onCanPlay);
+        videoEl.addEventListener('errordisplay', onErrorDisplay);
         return () => {
-            stopCodec();
-            stopQuality();
-            stopRelease();
+            videoEl.removeEventListener('canplay', onCanPlay);
+            videoEl.removeEventListener('errordisplay', onErrorDisplay);
         };
     }, []);
 
-    // Dispatch player_ready on canplay + set aspect-ratio from video
+    // A server that ignored Range: forward-only playback, no seeking. Counted;
+    // movi-player hides its own seek UI.
     useEffect(() => {
-        let dispatched = false;
-        function onCanPlay() {
-            if (!dispatched) {
-                dispatched = true;
-                // Native HLS (iOS) starts at live edge — force start from beginning
-                if (!restartNoteRef.current && !hlsRef.current && videoEl.currentTime > 1) {
-                    videoEl.currentTime = 0;
-                }
-                // Set container aspect-ratio from actual video dimensions
-                if (videoEl.videoWidth && videoEl.videoHeight) {
-                    containerEl.style.aspectRatio = `${videoEl.videoWidth} / ${videoEl.videoHeight}`;
-                }
-                window.dispatchEvent(new CustomEvent('player_ready'));
-            }
-        }
-        videoEl.addEventListener('canplay', onCanPlay);
-        return () => videoEl.removeEventListener('canplay', onCanPlay);
+        const onLinear = () => track('player-linear-mode', {});
+        videoEl.addEventListener('linearmode', onLinear);
+        return () => videoEl.removeEventListener('linearmode', onLinear);
     }, []);
 
-    // Once resume check completes: show resume prompt if there's a saved position
+    // Once the resume check completes: the prompt if there's a saved position.
     useEffect(() => {
         if (!resumeReady) return;
-        // Video only, like the prompt's markup and the hold below: an
-        // <audio> with a saved position has no prompt to answer, and a
-        // prompt that is "open" and invisible kept position saving paused.
-        // A player that is a stream restart of its own (stream-restart.js)
-        // continues from its note, audio too: the "prompt" is answered at
-        // once below and never drawn for an <audio>.
-        const restarted = !!restartNoteRef.current && resumePosition > 0;
-        if ((isVideo || restarted) && resumePosition && resumePosition > 0) {
+        // Video only, like the prompt's markup and the hold below.
+        if (isVideo && resumePosition && resumePosition > 0) {
             // A player that came back from a settings change (the preferred
-            // language, preferred-lang.js) continues without asking: the
-            // viewer never left.
-            autoResumeRef.current = restarted || takeAutoResume(resourceID, path);
+            // language, preferred-lang.js) continues without asking.
+            autoResumeRef.current = takeAutoResume(resourceID, path);
             setShowResumePrompt(true);
         }
     }, [resumeReady]);
 
-    // A film with a saved position does not start by itself (owner,
-    // 2026-09-18): <video autoplay> would play it from the beginning behind
-    // the prompt, sound included, while the viewer is still choosing. Held
-    // from the moment the saved position is known until the prompt is
-    // answered; 'play' is listened for because autoplay may fire after the
-    // prompt is already up (canplay arrives when the stream is ready, not
-    // when the page is). Either answer starts playback. Not for <audio>:
-    // the prompt renders for video only, so nothing could ever answer it
-    // and the track would be re-paused on every play, for good.
+    // A film with a saved position does not start by itself: autoplay would
+    // play it from the beginning behind the prompt, sound included. Held from
+    // the moment the saved position is known until the prompt is answered.
     useEffect(() => {
         if (!isVideo || !resumeReady || !(resumePosition > 0) || resumeAnswered) return;
         const video = videoRef.current;
@@ -1283,246 +327,43 @@ function PlayerComponent({ videoEl, settings, containerEl, showControls, fixedSi
         if (r && r.catch) r.catch(() => {});
     }, []);
 
-    // Handle resume choice. `play: false` is for a stream restart whose film
-    // was paused (stream-restart.js): the position without playback.
-    const handleResume = useCallback(({ play = true } = {}) => {
+    const handleResume = useCallback(() => {
         setShowResumePrompt(false);
         resumeAnsweredRef.current = true;
         setResumeAnswered(true);
         const video = videoRef.current;
         if (!video) return;
-        if (!play && !video.paused && typeof video.pause === 'function') video.pause();
-        if (isSession && sessionSeekUrl) {
-            // Not play() and then seek: the old run would be heard from the
-            // film's beginning for as long as the new one takes to start.
-            // The seeker starts the new run itself. A seek already in flight
-            // (an arrow key pressed just before the prompt came up) makes
-            // handleSeek a no-op, and the prompt is closed by now: the
-            // answer is kept and carried out when that seek lets go.
-            if (sessionSeekingRef.current) pendingResumeRef.current = resumePosition;
-            else handleSeek(resumePosition, { play, restore: !!restartNoteRef.current });
-        } else {
-            video.currentTime = resumePosition;
-            state.setCurrentTime(resumePosition, { restore: !!restartNoteRef.current });
-            if (play) playAfterPrompt();
-        }
-        // Save resumed position immediately
+        video.currentTime = resumePosition;
+        state.setCurrentTime(resumePosition);
+        playAfterPrompt();
         const dur = duration > 0 ? duration : (video.duration || 0);
         if (dur > 0) forceSendPosition(resumePosition, dur);
-    }, [resumePosition, isSession, sessionSeekUrl, handleSeek, duration, forceSendPosition, playAfterPrompt]);
+    }, [resumePosition, duration, forceSendPosition, playAfterPrompt]);
 
-    // The prompt is answered for the viewer when the note says so. Through
-    // the prompt's own state rather than around it: handleResume is the one
-    // place that knows how to resume a session and a direct source.
     const handleStartOver = useCallback(() => {
         setShowResumePrompt(false);
         resumeAnsweredRef.current = true;
         setResumeAnswered(true);
-        // Whatever autoplay got through before the hold is not "the
-        // beginning". Session playback has no direct seek, and its head
-        // start is a fraction of a second.
-        if (!isSession && videoRef.current && videoRef.current.currentTime > 0) videoRef.current.currentTime = 0;
-        playAfterPrompt();
-        // Save position 0 immediately
         const video = videoRef.current;
+        if (video && video.currentTime > 0) video.currentTime = 0;
+        playAfterPrompt();
         const dur = duration > 0 ? duration : (video?.duration || 0);
         if (dur > 0) forceSendPosition(0, dur);
-    }, [duration, forceSendPosition, isSession, playAfterPrompt]);
+    }, [duration, forceSendPosition, playAfterPrompt]);
 
-    // ...and this is where the note answers it. A file the viewer had all but
-    // finished starts from the top (next-item.js resumeAt): an automatic move
-    // to the next episode that resumed at 98% would end at once and chain on.
+    // A player back from a settings change answers the prompt itself. A file
+    // the viewer had all but finished starts from the top (next-item.js
+    // resumeAt): an automatic move that resumed at 98% would chain on.
     useEffect(() => {
         if (!showResumePrompt || !autoResumeRef.current) return;
         autoResumeRef.current = false;
-        // A stream restart goes back exactly where it stood, the end of the
-        // film included: resumeAt's "all but finished" is about a viewer
-        // coming back to a file, not about a session that died under one.
-        const note = restartNoteRef.current;
-        if (note) {
-            handleResume({ play: note.play });
-            // hls.js only: native HLS (iOS) is left as it was. A paused film
-            // gets there with the viewer's Play.
-            if (isSession && sessionSeekUrl && hlsRef.current) exactRestartPlace(note.at, { onPlay: !note.play });
-            return;
-        }
         const dur = duration > 0 ? duration : ((videoRef.current && videoRef.current.duration) || 0);
         if (resumeAt(resumePosition, dur) > 0) handleResume();
         else handleStartOver();
     }, [showResumePrompt, handleResume, handleStartOver]);
 
-    // Chromecast integration
-    useEffect(() => {
-        if (!features.chromecast) return;
-        let cancelled = false;
-        function initCast() {
-            if (cancelled) return;
-            if (!window.cast || !window.chrome?.cast) return;
-            const ctx = cast.framework.CastContext.getInstance();
-            ctx.setOptions({
-                receiverApplicationId: chrome.cast.media.DEFAULT_MEDIA_RECEIVER_APP_ID,
-                autoJoinPolicy: chrome.cast.AutoJoinPolicy.PAGE_SCOPED,
-                androidReceiverCompatible: true,
-            });
-            setCastAvailable(true);
-        }
-        loadCastSender().then((available) => { if (available) initCast(); });
-        return () => { cancelled = true; setCastAvailable(false); };
-    }, [features.chromecast, isVideo]);
-
-    // Session cleanup removed — sessions have server-side TTL
-
-    // Captions / embed modals are native <dialog>s that live OUTSIDE the
-    // player container (see stream_video.html). They must be opened with
-    // showModal(): fullscreen is requested on the player container, and
-    // only the fullscreen element's subtree is rendered — a CSS-toggled
-    // sibling would stay invisible until the user left fullscreen. A modal
-    // dialog joins the top layer above the fullscreen element instead.
-    const handleCaptionsClick = useCallback(() => {
-        toggleDialog('subtitles');
-        paintSubDelay();
-        // Opening the picker is the one moment the viewer is guaranteed to
-        // be looking at it, and plenty can have moved while it was closed:
-        // an audio switch re-picking the subtitle, an upload, a translation
-        // the viewer started. Recompute the counts, the dot and both
-        // "Now:" lines against what is actually playing.
-        const modal = document.getElementById('subtitles');
-        if (modal && modal.open) {
-            applyFlagSupport(modal);
-            refresh(modal);
-        }
-    }, []);
-    const handleEmbedClick = useCallback(() => toggleDialog('embed'), []);
-
-    // In-player share click — same handler as the header button (see
-    // assets/src/js/lib/share/share.js), tagged `location:'player'` so we
-    // can A/B which placement converts better.
-    //
-    // Use the explicit `data-share-url` baked into the <video> by the
-    // server (always points at the resource page on webtor.io). On the
-    // resource page this equals window.location.href; on embed players
-    // it sends the recipient to the real resource page, not the iframe
-    // URL on the embedding site.
-    const handleShareClick = useCallback(() => {
-        shareResource({
-            location: 'player',
-            url: videoEl?.dataset?.shareUrl,
-        });
-    }, []);
-
-    // One toggle for every control (click, space, the big button, the
-    // bar). During the silent hold the element is paused by the player
-    // while the viewer is looking at a seek that has not finished: their
-    // toggle means "pause", not "play". It ends the hold without playing
-    // and withdraws the hold question for this seek.
-    const togglePlay = useCallback(() => {
-        // Leaving for the next file: the film was paused on purpose
-        // (goNext), and a stray space or tap must not start it again.
-        if (nextLoadingRef.current) return;
-        // The grace popup is up and holds the film: Play is the answer
-        // "continue", and plays -- whoever paused it. Not a dead key: a
-        // Play that does nothing reads as a broken player, and pressing it
-        // says what "Continue at N Mbps" says.
-        if (graceHoldRef.current.isActive() && graceAnswerRef.current) {
-            graceAnswerRef.current('continue', 'play');
-            return;
-        }
-        if (cancelPreHold()) return;
-        state.togglePlay();
-    }, [cancelPreHold, state.togglePlay]);
-    togglePlayRef.current = togglePlay;
-
-    // Click on video to toggle play (video only).
-    // Use ref for showResumePrompt to avoid re-registering native DOM listeners.
-    const showResumePromptRef = useRef(false);
-    showResumePromptRef.current = showResumePrompt;
-
-    // Double-tap to seek (tap-seek.js). Touch only: with a mouse a double
-    // click is fullscreen and there are arrow keys. A click counts as a tap
-    // when a touchstart came just before it -- the one signal every mobile
-    // browser gives (iOS Safari's click is a plain MouseEvent).
-    const TAP_SEEK_STEP = 10;
-    const lastTouchAtRef = useRef(0);
-    const fromTouch = () => Date.now() - lastTouchAtRef.current < 800;
-    const seekPosRef = useRef({ currentTime: 0, duration: 0 });
-    seekPosRef.current = { currentTime: state.currentTime, duration: state.duration };
-    const [tapFx, setTapFx] = useState(null); // { dir, total, n }
-    const tapFxTimerRef = useRef(null);
-    const tapSeekRef = useRef(null);
-    if (!tapSeekRef.current) {
-        tapSeekRef.current = createTapSeek({
-            onSingle: () => togglePlayRef.current(),
-            onSeek: (dir, streak) => {
-                const { currentTime, duration } = seekPosRef.current;
-                const to = Math.max(0, Math.min(duration || Infinity, currentTime + dir * TAP_SEEK_STEP));
-                handleSeekRef.current(to);
-                setTapFx({ dir, total: streak * TAP_SEEK_STEP, n: Date.now() });
-                tapEventRef.current.push({ dir: dir > 0 ? 'forward' : 'back', seconds: streak * TAP_SEEK_STEP });
-                if (tapFxTimerRef.current) clearTimeout(tapFxTimerRef.current);
-                tapFxTimerRef.current = setTimeout(() => setTapFx(null), 650);
-            },
-        });
-    }
-    useEffect(() => () => {
-        if (tapSeekRef.current) tapSeekRef.current.cancel();
-        if (tapFxTimerRef.current) clearTimeout(tapFxTimerRef.current);
-    }, []);
-
-    // The subtitle-delay row in the #subtitles dialog (stream_video.html):
-    // server markup, painted and driven from here. Delegated on the document
-    // because the dialog is swapped whole on a preferred-language change, and
-    // repainted after ANY click inside it -- a track pick or the on/off switch
-    // changes whether there is anything to shift.
-    const paintSubDelay = useCallback(() => {
-        const modal = document.getElementById('subtitles');
-        const row = modal && modal.querySelector('#subtitle-delay');
-        if (!row) return;
-        const d = subDelayRef.current;
-        const value = row.querySelector('#subtitle-delay-value');
-        if (value) value.textContent = tf('player.subtitleDelayValue', formatDelay(d));
-        const reset = row.querySelector('[data-sub-delay="reset"]');
-        // Always in the row, disabled at zero (see the template). `hidden` and
-        // `invisible` are lifted for renders cached with the earlier markup.
-        if (reset) {
-            reset.hidden = false;
-            reset.classList.remove('invisible');
-            reset.removeAttribute('tabindex');
-        }
-        // The switch is the one live statement of on/off (markTrack moves it).
-        const toggle = modal.querySelector('#subtitles-toggle');
-        const off = toggle ? !toggle.checked : false;
-        const embedded = isEmbedded(readSelection(modal));
-        for (const b of row.querySelectorAll('button[data-sub-delay]')) {
-            b.disabled = off || embedded || (b.dataset.subDelay === 'reset' && d === 0);
-        }
-        row.classList.toggle('opacity-50', off || embedded);
-        row.title = embedded && !off ? (row.dataset.embeddedHint || '') : '';
-    }, []);
-    useEffect(() => { paintSubDelay(); }, [subDelay, paintSubDelay]);
-    useEffect(() => {
-        const onClick = (e) => {
-            const modal = e.target.closest && e.target.closest('#subtitles');
-            if (!modal) return;
-            const btn = e.target.closest('[data-sub-delay]');
-            if (btn && !btn.disabled) {
-                const op = btn.dataset.subDelay;
-                const cur = subDelayRef.current;
-                changeSubDelay(op === 'reset' ? 0 : cur + (op === 'later' ? SUBTITLE_DELAY_STEP : -SUBTITLE_DELAY_STEP), { announce: false });
-                return;
-            }
-            // After the dialog's own handlers have settled the selection.
-            setTimeout(paintSubDelay, 0);
-        };
-        document.addEventListener('click', onClick);
-        return () => document.removeEventListener('click', onClick);
-    }, [changeSubDelay, paintSubDelay]);
-
     // A player mounted by a move to the next file (next-item-go.js) is about
-    // to play by itself. Until it does, it is LOADING, not paused: the big
-    // Play button of a paused film under a spinner was two answers at once
-    // (owner, 2026-09-20). Ends with the first frame, with a question only
-    // the viewer can answer (the resume prompt), or after ten seconds -- if
-    // autoplay was refused, Play is exactly what the viewer needs.
+    // to play by itself. Until it does, it is LOADING, not paused.
     const [awaitingStart, setAwaitingStart] = useState(awaitStart);
     useEffect(() => {
         if (!awaitingStart) return undefined;
@@ -1537,13 +378,10 @@ function PlayerComponent({ videoEl, settings, containerEl, showControls, fixedSi
     }, [awaitingStart]);
     useEffect(() => { if (showResumePrompt) setAwaitingStart(false); }, [showResumePrompt]);
 
-    // Next episode / next track (next-item.js decides, next-item-go.js moves).
-    // `next` is the server's answer on the player element; without it none of
-    // this exists -- a film, the last file, an embed.
-    // ...or a page the move cannot happen on (canMoveOn).
+    // ---- the next file (next-item.js decides, next-item-go.js moves) ----
+    // `next` is the server's answer on the player element; without it none
+    // of this exists -- a film, the last file, an embed.
     const next = useRef(canMoveOn(document) ? readNext(videoEl) : null).current;
-    // The page before this one gave up on a quiet move and reloaded: say why,
-    // here, where the console survived -- and count it.
     useEffect(() => {
         let store = null;
         try { store = window.sessionStorage; } catch (e) { return; }
@@ -1553,66 +391,18 @@ function PlayerComponent({ videoEl, settings, containerEl, showControls, fixedSi
         track('next-item-fallback', { reason: String(note.reason).slice(0, 120) });
     }, []);
     const [autoplayNext, setAutoplayNext] = useState(() => loadPrefs().autoplayNext);
+    const autoplayNextRef = useRef(autoplayNext);
+    autoplayNextRef.current = autoplayNext;
     const [nextCard, setNextCard] = useState(null); // null | 'soon' | 'offer' | 'ask'
     const nextCancelledRef = useRef(false);
     const [nextLoading, setNextLoading] = useState(false);
-    // The latest line of the next file's start log. Kept from the silent
-    // prewarm too, so a viewer who presses Next midway sees where it is.
     const [nextProgress, setNextProgress] = useState('');
     const nextLoadingRef = useRef(false);
     nextLoadingRef.current = nextLoading;
-    // The stream restart's two late parts (createRecoveryPolicy above): the
-    // player leaving for the next file does not restart this one, and the
-    // restart itself -- the position to the server where it keeps one, the
-    // note for the next player, then the stream job again.
-    recoverLate.current.leaving = () => nextLoadingRef.current;
-    const restartStateNow = () => {
-        const video = videoRef.current;
-        return {
-            at: (video?.currentTime || 0) + seekOffsetRef.current,
-            play: !video?.paused,
-            settled: resumeReady && (resumeAnsweredRef.current || !(isVideo && resumePosition > 0)),
-            grace: videoEl.dataset.graceCtaAnswered || '',
-            media: { volume: videoEl.volume, muted: videoEl.muted, rate: videoEl.playbackRate },
-        };
-    };
-    const visibleRestart = (position, fallback) => {
-        const state = { ...restartStateNow(), ...position };
-        if (state.settled && state.at > 0) {
-            const dur = duration > 0 ? duration : (videoRef.current?.duration || 0);
-            if (dur > 0) forceSendPosition(state.at, dur);
-            writeNote(safeSessionStorage(), { resourceID, path, ...state });
-        }
-        if (fallback) {
-            restartFallback({ video: videoEl, ...fallback });
-            return;
-        }
-        restartStream({ win: window, doc: document, video: videoEl, root: trackContainer });
-    };
-    if (!backgroundRestartRef.current) {
-        backgroundRestartRef.current = createBackgroundRestart({
-            video: videoEl, root: trackContainer, getStage: currentStage, getAspectRatio: currentAspectRatio,
-            initPlayer, destroyPlayer,
-            getState: () => restartLate.current.state(),
-            visible: (position, fallback) => restartLate.current.visible(position, fallback),
-            onLoading: setBackgroundRestarting,
-            onFailure: () => recoverPolicyRef.current.restartFailed(),
-        });
-    }
-    restartLate.current.state = restartStateNow;
-    restartLate.current.visible = visibleRestart;
-    restartLate.current.start = (opts = {}) => {
-        setRecoverCard(null);
-        backgroundRestartRef.current.start(opts);
-    };
-    recoverLate.current.restart = (position) => restartLate.current.start({
-        position,
-        fixedPosition: Math.abs(position.at - restartStateNow().at) > 1,
-    });
     const nextGoRef = useRef(null);
     useEffect(() => () => nextGoRef.current?.dispose(), []);
-    const earlyGoneRef = useRef(false); // the credits countdown fires once
-    const cardShownAtRef = useRef(null); // film time the card came up at (countdown)
+    const earlyGoneRef = useRef(false);
+    const cardShownAtRef = useRef(null);
     if (next && !nextGoRef.current) {
         nextGoRef.current = createNextItemGo({
             next, resourceID, root: trackContainer,
@@ -1628,25 +418,14 @@ function PlayerComponent({ videoEl, settings, containerEl, showControls, fixedSi
     const safeSession = () => { try { return window.sessionStorage; } catch (e) { return null; } };
     const goNext = useCallback((how) => {
         if (!nextGoRef.current) return;
-        // An automatic move extends the streak; anything the viewer did
-        // themselves ends it (see the listener below).
         if (how === 'auto') writeStreak(safeSession(), readStreak(safeSession()) + 1);
         else writeStreak(safeSession(), 0);
-        // The card stays (or comes up) while the next file loads: it is what
-        // names the thing the spinner is for.
         setNextCard((c) => c || 'offer');
-        // The film the viewer is leaving stops here (owner, 2026-09-20). A
-        // next file that was not prewarmed takes its minute to start, and the
-        // old one kept playing under the spinner meanwhile: the viewer had
-        // said "next" and was shown more of "this" -- and its position kept
-        // moving, so coming back to it later resumed past what they saw.
-        // The pause also saves that position (useWatchHistory).
+        // The film being left stops here; the pause also saves its position
+        // (useWatchHistory).
         const video = videoRef.current;
         if (video && !video.paused) video.pause();
-        // The grace popup's hold goes too: its answer, given while the next
-        // file loads, must not start this one again.
         graceHoldRef.current.dispose();
-        backgroundRestartRef.current?.dispose();
         nextGoRef.current.go(how);
     }, []);
     // Any sign of a viewer ends the "is anyone there" streak.
@@ -1660,18 +439,12 @@ function PlayerComponent({ videoEl, settings, containerEl, showControls, fixedSi
             document.removeEventListener('keydown', alive, true);
         };
     }, []);
-    // Where the credits begin, from subtitle timings (credits.js). Looked for
-    // once per file, past the middle -- by then the tracks that are going to
-    // load have loaded, and a viewer who leaves early costs nothing. Loaded
-    // cues first; otherwise ONE request for a whole-file track, timings only.
+    // Where the credits begin: the container's chapters (the stream job's
+    // data-credits-at) first, else subtitle timings past the middle
+    // (credits.js) -- ONE request for a whole-file track, timings only.
     const creditsTriedRef = useRef(false);
     useEffect(() => {
-        // For whom: a viewer with a next episode to be offered, or one whose
-        // "watched" marks the server keeps (signed in). Anyone else has no
-        // use for the answer, and the lookup can cost a request.
         if (!isVideo || creditsTriedRef.current || !(next ? next.kind !== 'track' : !!window._userId)) return;
-        // The container's chapters first: the file's own answer, no subtitles
-        // needed, and known from the first second rather than from 60%.
         if (state.duration > 0) {
             const fromChapters = creditsFromElement(videoEl, state.duration);
             if (fromChapters !== null) {
@@ -1683,17 +456,14 @@ function PlayerComponent({ videoEl, settings, containerEl, showControls, fixedSi
         }
         if (!(state.duration > 0) || state.currentTime < state.duration * 0.6) return;
         creditsTriedRef.current = true;
-        const duration = state.duration;
+        const dur = state.duration;
         const settle = (cues, source) => {
-            const at = creditsStart(cues, duration);
+            const at = creditsStart(cues, dur);
             creditsAtRef.current = at;
-            track('next-item-credits', { source, found: at !== null, lead_s: at !== null ? Math.round(duration - at) : 0, next: !!next });
+            track('next-item-credits', { source, found: at !== null, lead_s: at !== null ? Math.round(dur - at) : 0, next: !!next });
         };
-        // Loaded cues are free, so they are asked first -- but they may be a
-        // track that cannot answer (an AI translation still being produced
-        // has no last line yet): then a whole-file track is fetched after all.
         const loaded = cuesOfLoadedTracks(videoRef.current);
-        if (loaded.length && creditsStart(loaded, duration) !== null) { settle(loaded, 'loaded'); return; }
+        if (loaded.length && creditsStart(loaded, dur) !== null) { settle(loaded, 'loaded'); return; }
         const src = timingSourceURL(document.getElementById('subtitles'));
         if (!src) {
             if (loaded.length) settle(loaded, 'loaded');
@@ -1703,23 +473,21 @@ function PlayerComponent({ videoEl, settings, containerEl, showControls, fixedSi
         fetch(src).then((r) => (r.ok ? r.text() : '')).then((text) => settle(parseVttTimings(text), 'fetched')).catch(() => {});
     }, [state.currentTime, state.duration]);
 
-    // Prewarm and the "coming up" card follow the clock.
+    // The "coming up" card follows the clock.
     useEffect(() => {
         if (!next || !nextGoRef.current) return;
         const plan = advancePlan({
             currentTime: state.currentTime, duration: state.duration, playing: state.playing,
             prewarmed: nextGoRef.current.isPrepared(), kind: next.kind, creditsAt: creditsAtRef.current,
         });
-        // The prewarm is not decided here: see the `timeupdate` effect below.
         if (plan.card && !nextCancelledRef.current && nextCard === null) {
             cardShownAtRef.current = state.currentTime;
             setNextCard('soon');
             track('next-item-shown', { kind: next.kind, autoplay: autoplayNext });
         }
-        if (!plan.card && nextCard === 'soon') { setNextCard(null); cardShownAtRef.current = null; } // sought back
-        // The countdown ran out inside the credits: the same verdict `ended`
-        // gets, a little earlier. Only while actually playing -- a paused
-        // film does not leave by itself.
+        if (!plan.card && nextCard === 'soon') { setNextCard(null); cardShownAtRef.current = null; }
+        // The countdown ran out inside the credits: the verdict `ended` gets,
+        // a little earlier. Only while actually playing.
         if (plan.card && nextCard === 'soon' && state.playing && !nextCancelledRef.current && !earlyGoneRef.current) {
             const cd = countdown({ currentTime: state.currentTime, duration: state.duration, creditsAt: creditsAtRef.current, shownAt: cardShownAtRef.current });
             if (cd.early && cd.left === 0) {
@@ -1730,20 +498,14 @@ function PlayerComponent({ videoEl, settings, containerEl, showControls, fixedSi
             }
         }
     }, [state.currentTime, state.duration, state.playing]);
-    // The prewarm follows the element's own `timeupdate`, for every kind of
-    // file. The effect above follows state.currentTime, which is fed by
-    // requestAnimationFrame -- and a background tab, where music lives and
-    // where a film may well be left to play out, runs no animation frames at
-    // all: the prewarm never got its turn there. `timeupdate` keeps firing
-    // (about once a second). The card stays with the effect above: it is
-    // something to look at, and a hidden tab has nobody looking.
+    // The prewarm follows the element's own `timeupdate`: state.currentTime
+    // is fed by requestAnimationFrame, which a background tab does not run.
     useEffect(() => {
         const video = videoRef.current;
         if (!next || !video || !nextGoRef.current) return undefined;
         const onTime = () => {
-            const dur = seekPosRef.current.duration || video.duration || 0;
             const plan = advancePlan({
-                currentTime: (video.currentTime || 0) + seekOffsetRef.current, duration: dur,
+                currentTime: video.currentTime || 0, duration: video.duration || 0,
                 playing: !video.paused, prewarmed: nextGoRef.current.isPrepared(),
                 kind: next.kind, creditsAt: creditsAtRef.current,
             });
@@ -1752,7 +514,6 @@ function PlayerComponent({ videoEl, settings, containerEl, showControls, fixedSi
         video.addEventListener('timeupdate', onTime);
         return () => video.removeEventListener('timeupdate', onTime);
     }, []);
-
     // The end of the file.
     useEffect(() => {
         const video = videoRef.current;
@@ -1768,8 +529,6 @@ function PlayerComponent({ videoEl, settings, containerEl, showControls, fixedSi
         video.addEventListener('ended', onEnded);
         return () => video.removeEventListener('ended', onEnded);
     }, [autoplayNext, goNext]);
-    // The card lives in the top layer, docked to the player's corner: inside
-    // the frame a narrow player cut its top off (useDockedPopover).
     const nextCardRef = useRef(null);
     const nextCardVisible = !!(next && next.kind !== 'track' && nextCard);
     useDockedPopover(nextCardVisible, containerEl, nextCardRef, `${nextLoading}|${nextProgress ? 1 : 0}|${nextCard}`);
@@ -1787,60 +546,111 @@ function PlayerComponent({ videoEl, settings, containerEl, showControls, fixedSi
         });
     }, []);
 
-    // Media Session (media-session.js): lock screen, headset, media keys.
-    // Bound once; position is reported in film time on the events that change
-    // the timeline, and seeks go through handleSeek like every other seek.
-    const mediaSessionRef = useRef(null);
+    // ---- webtor's controls in movi-player's own chrome ----------------
+    // Share (the header's handler, tagged location:'player'), the embed
+    // dialog, the track picker dialog, Next and its autoplay switch. Added
+    // once; addControl puts them on the bar and in the right-click menu,
+    // fullscreen included.
+    const goNextRef = useRef(goNext);
+    goNextRef.current = goNext;
+    const toggleAutoplayRef = useRef(toggleAutoplayNext);
+    toggleAutoplayRef.current = toggleAutoplayNext;
     useEffect(() => {
-        const video = videoRef.current;
-        if (!video || typeof navigator === 'undefined') return undefined;
-        const seen = new Set();
-        const msUsed = (action) => { if (!seen.has(action)) { seen.add(action); track('player-media-session', { action }); } };
-        const ms = bindMediaSession({
-            session: navigator.mediaSession,
-            Metadata: typeof window.MediaMetadata === 'function' ? window.MediaMetadata : null,
-            title: getResourceTitle(videoEl),
-            artwork: video.poster || '',
-            // Counted once per action per player: a headset's play/pause can
-            // fire dozens of times in a film and says nothing new after the first.
-            onPlay: () => { msUsed('play'); if (video.paused) togglePlayRef.current(); },
-            onPause: () => { msUsed('pause'); if (!video.paused) togglePlayRef.current(); },
-            onSeekTo: (t) => { msUsed('seek'); handleSeekRef.current(t); },
-            getPosition: () => ({ ...seekPosRef.current, rate: video.playbackRate }),
-        });
-        mediaSessionRef.current = ms;
-        const evs = ['play', 'pause', 'seeked', 'ratechange', 'loadedmetadata'];
-        const onEv = () => ms.update();
-        evs.forEach((n) => video.addEventListener(n, onEv));
+        const el = videoEl;
+        if (!showControls || typeof el.addControl !== 'function') return undefined;
+        const added = [];
+        const add = (spec) => {
+            try {
+                el.addControl(spec);
+                added.push(spec.id);
+            } catch (e) {
+                console.warn('player: addControl failed --', spec.id, e);
+            }
+        };
+        if (isVideo && features.share) {
+            add({
+                id: 'wt-share', label: t('player.share'), icon: ICON_SHARE, placement: ['top', 'menu'],
+                onSelect: () => shareResource({ location: 'player', url: videoEl.dataset.shareUrl }),
+            });
+        }
+        if (features.embed) {
+            add({ id: 'wt-embed', label: t('player.embed'), icon: ICON_EMBED, placement: 'menu', onSelect: () => toggleDialog('embed') });
+        }
+        if (isVideo && features.advancedtracks && document.getElementById('subtitles')) {
+            add({ id: 'wt-tracks', label: t('player.subtitlesAndAudio'), icon: ICON_TRACKS, placement: 'menu', onSelect: () => toggleDialog('subtitles') });
+        }
+        if (next) {
+            add({
+                id: 'wt-next', label: t('player.next'), title: next.label ? `${t('player.next')}: ${next.label}` : null,
+                icon: ICON_NEXT, after: 'play', side: 'left', hotkey: 'shift+n',
+                // Not twice: the next file is already loading.
+                onSelect: () => { if (!nextLoadingRef.current) goNextRef.current('button'); },
+            });
+            add({
+                id: 'wt-autoplay-next', label: t('player.autoplayNext'), placement: 'menu', toggle: true,
+                active: autoplayNextRef.current, onSelect: () => toggleAutoplayRef.current(),
+            });
+        }
         return () => {
-            evs.forEach((n) => video.removeEventListener(n, onEv));
-            ms.destroy();
-            mediaSessionRef.current = null;
+            for (const id of added) {
+                try { el.removeControl(id); } catch (e) { /* the element is gone */ }
+            }
+        };
+    }, []);
+    // The menu's autoplay switch follows the card's.
+    useEffect(() => {
+        if (!next || typeof videoEl.updateControl !== 'function') return;
+        try { videoEl.updateControl('wt-autoplay-next', { active: autoplayNext }); } catch (e) { /* not added */ }
+    }, [autoplayNext]);
+
+    // ---- fullscreen on the stage -----------------------------------------
+    // movi-player asks before it goes fullscreen (movi-fullscreen-request,
+    // cancelable): the page takes it onto the STAGE, the element that outlives
+    // a player (initPlayer), so the move to the next file stays fullscreen and
+    // this layer's overlays -- the resume prompt, the buffering label, the
+    // next file's card -- are inside it. Where the stage cannot go fullscreen
+    // (iOS) movi-player keeps its own route.
+    useEffect(() => {
+        const el = videoEl;
+        const stage = (containerEl.closest && containerEl.closest('.wt-player-stage')) || containerEl;
+        const enter = stage.requestFullscreen || stage.webkitRequestFullscreen;
+        if (!enter) return undefined;
+        const fsElement = () => document.fullscreenElement || document.webkitFullscreenElement;
+        const onRequest = (e) => {
+            e.preventDefault();
+            if (e.detail && e.detail.active) {
+                const exit = document.exitFullscreen || document.webkitExitFullscreen;
+                if (fsElement() && exit) Promise.resolve(exit.call(document)).catch(() => {});
+                if (typeof el.setHostFullscreen === 'function') el.setHostFullscreen(false);
+                return;
+            }
+            Promise.resolve(enter.call(stage))
+                .then(() => { if (typeof el.setHostFullscreen === 'function') el.setHostFullscreen(true); })
+                .catch(() => {});
+        };
+        // Left by Esc or the browser's own way out: the element's UI follows.
+        const onChange = () => {
+            if (!fsElement() && typeof el.setHostFullscreen === 'function') el.setHostFullscreen(false);
+        };
+        el.addEventListener('movi-fullscreen-request', onRequest);
+        document.addEventListener('fullscreenchange', onChange);
+        document.addEventListener('webkitfullscreenchange', onChange);
+        return () => {
+            el.removeEventListener('movi-fullscreen-request', onRequest);
+            document.removeEventListener('fullscreenchange', onChange);
+            document.removeEventListener('webkitfullscreenchange', onChange);
         };
     }, []);
 
     // ---- the buffering label (BufferingLabel.jsx, buffering-label.js) ----
-    //
-    // Where the spinner was, with its visibility: "Buffering". At the plan's
-    // cap it is the lock, the button that opens the status's stream plan
+    // Where movi-player's spinner was (controlslist nospinner): "Buffering",
+    // and at the plan's cap the lock that opens the status's stream plan
     // card. Whether the viewer is held at the cap is the transfer status's
-    // word (lib/transferStatus.js playerLabel), carried here from the
-    // status's bundle by lib/playerLabel.js -- none in an embed; capLock adds
-    // what only the player knows at this very moment, and one word of its
-    // own that comes before the status's: the viewer's answer to its grace
-    // popup, with the card the stream job rendered for it (answerLabel).
+    // word (lib/playerLabel.js); capLock adds what only the player knows.
     const [capLabel, setCapLabel] = useState(() => currentPlayerLabel());
-    // With it the cause the status names when a wait is not the cap's (the
-    // swarm, no seeders, pieces nobody has, nothing flowing): the answer's
-    // lock below gives way to it.
     const [capCause, setCapCause] = useState(() => currentPlayerCause());
-    // The same lock by this player's own word once the viewer has answered
-    // its grace popup (buffering-label.js answerLabel): the card the stream
-    // job rendered on the element, read once -- the element's for its life.
     const answerRef = useRef(undefined);
     if (answerRef.current === undefined) answerRef.current = answerLabel(videoEl);
-    // Read again on subscribing: a label published between the first render
-    // and this effect would otherwise wait for the next change.
     useEffect(() => {
         setCapLabel(currentPlayerLabel());
         setCapCause(currentPlayerCause());
@@ -1849,35 +659,16 @@ function PlayerComponent({ videoEl, settings, containerEl, showControls, fixedSi
             setCapCause(cause);
         });
     }, []);
-    // Whether the card the lock opens is open. The card is the page's, not
-    // this player's (BufferingLabel.jsx openCapCard): only the viewer closes
-    // it -- not the film playing again, not the status taking its word back
-    // (owner, 2026-09-26), not the next file's player replacing this one. A
-    // player mounted under an open card reads it on mounting.
     const [capCardUp, setCapCardUp] = useState(() => capCardOpen());
     useEffect(() => {
         setCapCardUp(capCardOpen());
         return onCapCard(setCapCardUp);
     }, []);
-    const bufferingShown = showControls && isVideo && !recoverCard && (sessionSeeking || preHolding || nextLoading || (backgroundRestarting && (state.loading || !state.playing)) || (awaitingStart && !state.playing) || (state.playing && state.loading));
-    // The grace popup is up, or comes up in this very render's effect (the
-    // clock, a session seek's target included, has just crossed the window):
-    // the frame before it must not draw the lock, nor count it seen.
+    const bufferingShown = showControls && isVideo && !showResumePrompt
+        && (nextLoading || (awaitingStart && !state.playing) || (state.playing && state.loading));
     const graceUp = graceOpen || (!!graceDurationSec && !graceShownRef.current
         && state.currentTime >= graceDurationSec && !!document.querySelector('#grace-cta'));
-    // The viewer's answer to this player's grace popup, on its element
-    // (data-grace-cta-answered, set with the popup's close, which re-renders):
-    // the rest of this film is at the cap, the lock at once. Not while the
-    // next file loads: that wait is the next file's start, inside its own
-    // grace window, and the next element starts without the mark. Not for a
-    // file the stream job says fits under the cap (data-status-fits-cap),
-    // and not where the status names another cause for the wait (capCause).
     const answered = 'graceCtaAnswered' in videoEl.dataset && !nextLoading;
-    // The answer's lock covers only the gap before the status's word: once
-    // the status's own label has been up on this stretch past the window,
-    // its taking it back is its word too (buffering-label.js statusSpoke).
-    // Every render, the pill shown or not: the label comes and goes while
-    // the film plays as well.
     const spokeRef = useRef(false);
     spokeRef.current = statusSpoke(spokeRef.current, {
         label: capLabel, answered, graceSec: graceDurationSec, movieTime: state.currentTime,
@@ -1886,10 +677,6 @@ function PlayerComponent({ videoEl, settings, containerEl, showControls, fixedSi
         label: capLabel, answer: answerRef.current, answered, fitsCap: 'statusFitsCap' in videoEl.dataset,
         cause: capCause, spoke: spokeRef.current, graceSec: graceDurationSec, movieTime: state.currentTime, graceUp,
     }) : null;
-    // The lock's impression, once per player and set of props: a film at
-    // the cap stalls again and again, and one lock seen is one lock seen --
-    // the answer's lock the status then takes over too (lockKey: all but
-    // `source`, which says who raised it first).
     const lockSeenRef = useRef(new Set());
     useEffect(() => {
         if (!lock) return;
@@ -1898,10 +685,6 @@ function PlayerComponent({ videoEl, settings, containerEl, showControls, fixedSi
         lockSeenRef.current.add(key);
         track('player-label-lock-shown', lock.props);
     }, [lock]);
-    // Opening the card is its button's impression: on screen because the
-    // viewer asked for it (the status box's counts half on screen for 1 s).
-    // A modal card makes the lock unreachable while it is open; without
-    // showModal (the class fallback) the lock toggles it.
     const toggleCapCard = useCallback(() => {
         if (capCardOpen()) {
             closeCapCard();
@@ -1912,64 +695,16 @@ function PlayerComponent({ videoEl, settings, containerEl, showControls, fixedSi
         openCapCard(lock);
     }, [lock]);
 
-    const handleVideoClick = useCallback((e) => {
-        if (!isVideo || sessionSeekingRef.current || showResumePromptRef.current) return;
-        if (e.target.closest('.wt-player-controls')) return;
-        if (e.target.closest('.wt-resume-prompt')) return;
-        if (e.target.closest('.wt-catchup')) return;
-        if (e.target.closest('.wt-offer-card')) return;
-        if (e.target.closest('.wt-recover')) return;
-        resetHideTimer();
-        if (fromTouch() && containerEl) {
-            const r = containerEl.getBoundingClientRect();
-            tapSeekRef.current.tap(e.clientX - r.left, r.width, performance.now());
-            return;
-        }
-        togglePlayRef.current();
-    }, [isVideo, containerEl]);
-
-    // Double-click for fullscreen. Not for taps: Android fires dblclick on a
-    // double tap, and that gesture now means "seek".
-    const handleDoubleClick = useCallback((e) => {
-        if (!isVideo || fromTouch()) return;
-        if (e.target.closest('.wt-player-controls')) return;
-        state.toggleFullscreen();
-    }, [isVideo, state.toggleFullscreen]);
-
-    // Apply classes to the container element (managed outside Preact)
+    // The container's classes (managed outside Preact).
     useEffect(() => {
         const el = containerEl;
         if (!el) return;
-        el.className = `wt-player ${isVideo ? 'wt-player--video' : 'wt-player--audio'}${fixedSize ? ' wt-player--fixed' : ''}`;
-
-        const onMove = () => resetHideTimer();
-        const onTouch = () => { lastTouchAtRef.current = Date.now(); resetHideTimer(); };
-        const onClick = (e) => handleVideoClick(e);
-        const onDblClick = (e) => handleDoubleClick(e);
-        el.addEventListener('mousemove', onMove);
-        el.addEventListener('touchstart', onTouch);
-        el.addEventListener('click', onClick);
-        el.addEventListener('dblclick', onDblClick);
-
-        return () => {
-            el.removeEventListener('mousemove', onMove);
-            el.removeEventListener('touchstart', onTouch);
-            el.removeEventListener('click', onClick);
-            el.removeEventListener('dblclick', onDblClick);
-        };
+        el.className = `wt-player wt-player--movi ${isVideo ? 'wt-player--video' : 'wt-player--audio'}${fixedSize ? ' wt-player--fixed' : ''}`;
     }, [containerEl, isVideo]);
-
-    // Update dynamic classes
-    useEffect(() => {
-        const el = containerEl;
-        if (!el) return;
-        el.classList.toggle('wt-player--fullscreen', state.fullscreen);
-        el.classList.toggle('wt-player--controls-visible', controlsVisible);
-    }, [state.fullscreen, controlsVisible, containerEl]);
 
     return (
         <>
-            {/* Resume prompt — ask user to continue or start over */}
+            {/* Resume prompt -- continue from the saved position or start over */}
             {showResumePrompt && isVideo && (
                 <div class="wt-player-overlay wt-resume-prompt" style="background:rgba(0,0,0,0.75);z-index:50;display:flex;align-items:center;justify-content:center"
                      onClick={(e) => e.stopPropagation()} onDblClick={(e) => e.stopPropagation()}>
@@ -1987,113 +722,14 @@ function PlayerComponent({ videoEl, settings, containerEl, showControls, fixedSi
                 </div>
             )}
 
-            {/* The AI translation is behind the playhead — offer to wait
-                for it. A top-centre pill: the subtitles it is about live
-                at the bottom of the picture and the controls under them. */}
-            {/* The subtitles are back: said once, for a few seconds, so the
-                pill that explained their absence does not just vanish. */}
-            {catchUp && catchUp.caughtUp && isVideo && (
-                <div class="wt-catchup wt-catchup--done" role="status"
-                     onClick={(e) => e.stopPropagation()} onDblClick={(e) => e.stopPropagation()}>
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
-                    <span class="wt-catchup-text">{t('player.subtitleCaughtUp')}</span>
-                </div>
-            )}
-            {catchUp && !catchUp.caughtUp && isVideo && (
-                <div class="wt-catchup" role="status"
-                     onClick={(e) => e.stopPropagation()} onDblClick={(e) => e.stopPropagation()}>
-                    <LoadingSpinner />
-                    <span class="wt-catchup-text">
-                        {t(catchUp.waiting ? 'player.subtitleCatchUpWaitingShort' : 'player.subtitleCatchUpShort')}
-                    </span>
-                    <button type="button" class="wt-catchup-btn"
-                        onClick={catchUp.waiting ? handleKeepWatching : handleWait}>
-                        {t(catchUp.waiting ? 'player.subtitleCatchUpResume' : 'player.subtitleCatchUpWait')}
-                    </button>
-                    <button type="button" class="wt-catchup-close"
-                        aria-label={t('player.subtitleCatchUpDismiss')} onClick={handleDismissCatchUp}>×</button>
-                </div>
-            )}
-
-            {/* No subtitles in the viewer's language: the picker's offer,
-                brought to the picture. Same slot as the catch-up pill, which
-                wins it (offerVisible). */}
-            {isVideo && offerVisible({ offer, lingering: offerLingering, controlsVisible, cardOpen: offerCard, catchUp }) && (
-                <div class="wt-catchup wt-offer" data-kind={offer.kind}
-                     onClick={(e) => e.stopPropagation()} onDblClick={(e) => e.stopPropagation()}>
-                    <button type="button" class="wt-offer-main" onClick={handleOfferClick}
-                        aria-expanded={offer.kind === 'upsell' ? String(offerCard) : undefined}>
-                        <span class="wt-offer-mark" aria-hidden="true">✦ AI</span>
-                        <span class="wt-catchup-text">{offer.label}</span>
-                        {offer.kind === 'upsell' && (
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-                        )}
-                    </button>
-                    <button type="button" class="wt-catchup-close"
-                        aria-label={t('player.subtitleCatchUpDismiss')} onClick={() => handleOfferDismiss('close')}>
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
-                    </button>
-                </div>
-            )}
-            {isVideo && offer && offer.kind === 'upsell' && offerCard && !catchUp && (() => {
-                const card = readUpsellCard(findSubtitlesModal(trackContainer));
-                return (
-                    <div class="wt-offer-card" role="dialog" aria-label={offer.label}
-                         onClick={(e) => e.stopPropagation()} onDblClick={(e) => e.stopPropagation()}>
-                        <p class="wt-offer-card-text">{card.text}</p>
-                        {card.href && (
-                            <a class="wt-offer-card-cta" href={card.href} target="_blank" rel="noopener"
-                               data-umami-event="donate-subtitle-translate" data-umami-event-tier={card.tier}
-                               data-umami-event-source="player">{card.cta}</a>
-                        )}
-                        <div class="wt-offer-card-row">
-                            <button type="button" class="wt-offer-card-link" onClick={() => handleOfferDismiss('later')}>{t('player.subtitleOfferLater')}</button>
-                            <button type="button" class="wt-offer-card-link" onClick={() => handleOfferDismiss('never')}>{t('player.subtitleOfferNever')}</button>
-                        </div>
-                    </div>
-                );
-            })()}
-
-            {/* The buffering label, where the spinner was (a stall of the
-                playing film, a start, a seek, a hold); at the plan's cap the
-                lock (capLock above). Said by a live region of its own that is
-                there before its words: one created with them -- the pill's
-                role=status, mounted with the pill -- is not read out by most
-                screen readers, and the lock, a button, said nothing. */}
+            {/* The buffering label, said by a live region of its own that is
+                there before its words. */}
             <span class="sr-only" role="status" data-buffering-live>
                 {bufferingShown ? (lock ? tf('player.bufferingCap', lock.rate) : t('player.buffering')) : ''}
             </span>
             {bufferingShown && (
                 <div class={`wt-player-overlay wt-buffering${lock ? ' wt-buffering--cap' : ''}`}>
                     <BufferingPill label={lock} open={!!lock && capCardUp} onToggle={toggleCapCard} />
-                </div>
-            )}
-
-            {/* The stream cannot go on and was not restarted by itself
-                (stream-restart.js): one button, which restarts it where it
-                stood. Where the big play button would be; it wins that slot. */}
-            {recoverCard && (
-                <div class="wt-player-overlay wt-recover" role="alert"
-                     onClick={(e) => e.stopPropagation()} onDblClick={(e) => e.stopPropagation()}>
-                    <div class="wt-recover-card">
-                        <p class="wt-recover-text">{t('player.streamLost')}</p>
-                        <button type="button" class="wt-resume-btn wt-resume-btn--primary"
-                            onClick={(e) => { e.stopPropagation(); recoverPolicyRef.current.click(); }}>
-                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" width="16" height="16" aria-hidden="true"><path fill-rule="evenodd" d="M4.5 5.653c0-1.427 1.529-2.33 2.779-1.643l11.54 6.347c1.295.712 1.295 2.573 0 3.286L7.28 19.99c-1.25.687-2.779-.217-2.779-1.643V5.653Z" clip-rule="evenodd" /></svg>
-                            {t('player.resumeWatching')}
-                        </button>
-                    </div>
-                </div>
-            )}
-
-            {/* Big play button — shown when paused, regardless of loading state */}
-            {showControls && isVideo && !state.playing && !sessionSeeking && !preHolding && !showResumePrompt && !awaitingStart && !nextLoading && !backgroundRestarting && !recoverCard && (
-                <div class="wt-player-overlay wt-player-overlay--play" onDblClick={(e) => e.stopPropagation()}>
-                    <button type="button" class="wt-player-big-play" onClick={(e) => { e.stopPropagation(); togglePlay(); }} aria-label={t('player.play')}>
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-16 h-16">
-                            <path fill-rule="evenodd" d="M4.5 5.653c0-1.427 1.529-2.33 2.779-1.643l11.54 6.347c1.295.712 1.295 2.573 0 3.286L7.28 19.99c-1.25.687-2.779-.217-2.779-1.643V5.653Z" clip-rule="evenodd" />
-                        </svg>
-                    </button>
                 </div>
             )}
 
@@ -2107,8 +743,6 @@ function PlayerComponent({ videoEl, settings, containerEl, showControls, fixedSi
                         {nextLoading ? t('player.nextLoading') : (nextCard === 'ask' ? t('player.stillWatching') : (nextCard === 'soon' && autoplayNext ? tf('player.nextIn', countdown({ currentTime: state.currentTime, duration: state.duration, creditsAt: creditsAtRef.current, shownAt: cardShownAtRef.current }).left) : t('player.nextUp')))}
                     </div>
                     <div class="wt-next-card-label" title={next.label}>{next.label}</div>
-                    {/* What the wait is made of: the running step of the next
-                        file's start, as the ordinary job log would say it. */}
                     {nextLoading && nextProgress && (
                         <div class="wt-next-card-progress" aria-live="off" title={nextProgress}>{nextProgress}</div>
                     )}
@@ -2126,107 +760,8 @@ function PlayerComponent({ videoEl, settings, containerEl, showControls, fixedSi
                     </label>
                 </div>
             )}
-
-            {/* What a key just changed (speed, subtitle delay): the keys
-                have no other face. */}
-            {toast && (
-                <div key={toast.n} class="wt-player-toast" role="status">{toast.text}</div>
-            )}
-
-            {/* Double-tap seek feedback: which way, and how far the streak
-                has gone. Keyed so each tap restarts the animation. */}
-            {tapFx && (
-                <div key={tapFx.n} class={`wt-tap-seek wt-tap-seek--${tapFx.dir > 0 ? 'right' : 'left'}`} aria-hidden="true">
-                    {tapFx.dir > 0 ? '+' : '\u2212'}{tapFx.total}
-                </div>
-            )}
-
-            {/* Controls */}
-            {showControls && (
-                <Controls
-                    playing={state.playing}
-                    currentTime={state.currentTime}
-                    duration={state.duration}
-                    volume={state.volume}
-                    muted={state.muted}
-                    rate={state.rate}
-                    fullscreen={state.fullscreen}
-                    buffered={state.buffered}
-                    seeking={sessionSeeking}
-                    onTogglePlay={togglePlay}
-                    onSeek={handleSeek}
-                    onVolumeChange={state.setVolume}
-                    onRateChange={(r) => { if (r !== state.rate) track('player-speed', { rate: r, source: 'menu' }); state.setRate(r); }}
-                    onToggleMute={state.toggleMute}
-                    onToggleFullscreen={state.toggleFullscreen}
-                    onCaptionsClick={handleCaptionsClick}
-                    onEmbedClick={handleEmbedClick}
-                    onNext={next ? () => goNext('button') : null}
-                    nextBusy={nextLoading}
-                    autoplayNext={autoplayNext}
-                    onToggleAutoplayNext={next ? toggleAutoplayNext : null}
-                    onCompatMode={passthroughRoute ? () => passthroughGuardRef.current.fire('user') : null}
-                    nextLabel={next ? next.label : ''}
-                    isVideo={isVideo}
-                    features={features}
-                />
-            )}
-
-            {/* Top-right share affordance — visible immediately, fades with
-                the controls. Title on the left, share icon on the right.
-                The title comes from data-resource-title when provided by
-                the template, else from document.title stripped of the
-                " | Webtor.io" site-suffix that layouts/main.html appends. */}
-            {/* Gated on features.share, NOT castAvailable: castAvailable only
-                means the Cast SDK loaded (true in every desktop Chrome), and
-                a paid embed that disabled share must not suddenly grow a
-                Webtor gradient + torrent title over its video. Share-less
-                players get the floating cast launcher below instead. */}
-            {showControls && isVideo && features.share && (() => {
-                const title = getResourceTitle(videoEl);
-                // Overlay container has pointer-events:none in CSS so the
-                // gradient stays click-through (clicks land on the video
-                // for play-toggle). Only the action buttons need explicit
-                // stopPropagation — their own pointer-events:auto means they
-                // capture the click before it can reach video.
-                return (
-                    <div class="wt-player-top-overlay">
-                        {title && <div class="wt-player-top-title" title={title}>{title}</div>}
-                        <div class="wt-player-top-actions">
-                            {castAvailable && (
-                                <div class="wt-player-cast-button" onClick={(e) => e.stopPropagation()}>
-                                    <google-cast-launcher></google-cast-launcher>
-                                </div>
-                            )}
-                            {features.share && (
-                                <button type="button" class="wt-player-btn wt-player-top-share" onClick={(e) => { e.stopPropagation(); handleShareClick(); }} aria-label={t('player.share')}>
-                                    <ShareIcon />
-                                </button>
-                            )}
-                        </div>
-                    </div>
-                );
-            })()}
-            {/* Controls-less players have no top overlay, and share-less
-                embeds deliberately render none — keep the cast launcher
-                reachable via the legacy floating position in both cases. */}
-            {isVideo && castAvailable && (!showControls || !features.share) && (
-                <div class="wt-player-cast-button wt-player-cast-button--floating" onClick={(e) => e.stopPropagation()}>
-                    <google-cast-launcher></google-cast-launcher>
-                </div>
-            )}
         </>
     );
-}
-
-// getResourceTitle pulls the leaf label for the top overlay.
-// Server computes the right title (file basename minus extension,
-// falling back to the torrent name) in jobs/scripts/action.go
-// resourceLeafTitle() and passes it via data-resource-title on the
-// <video>. Empty string when the attribute is missing — the overlay
-// renders without a label rather than mis-parsing document.title.
-function getResourceTitle(videoEl) {
-    return videoEl?.dataset?.resourceTitle || '';
 }
 
 function formatTime(seconds) {
@@ -2238,7 +773,10 @@ function formatTime(seconds) {
     return `${m}:${String(sec).padStart(2, '0')}`;
 }
 
-function parseFeatures(settings, isVideo, duration, isSession) {
+// The features a page's settings switch on and off (data-settings: an embed's
+// own, or the resource page's defaults). The ones movi-player draws become its
+// controlslist (controlsListFor).
+export function parseFeatures(settings, isVideo) {
     const adsOn = !!(window._domainSettings && window._domainSettings.ads === true);
     const defaults = {
         playpause: true,
@@ -2248,30 +786,59 @@ function parseFeatures(settings, isVideo, duration, isSession) {
         speed: true,
         advancedtracks: isVideo,
         fullscreen: isVideo,
-        chromecast: isVideo,
-        // The page renders the Embed dialog only on an instance that
-        // serves embeds (stream_video.html); no dialog, no button.
+        // The page renders the Embed dialog only on an instance that serves
+        // embeds (stream_video.html); no dialog, no control.
         embed: isVideo && !!document.getElementById('embed'),
-        // In-player share button — same handler as the header button,
-        // fires share-resource Umami with location:'player'. Treated as
-        // a growth feature: locked on for ads-enabled (free) embed
-        // domains, so the override loop below ignores settings.features.share
-        // unless the domain has earned NoAds (paid tier). On the resource
-        // page itself there's no _domainSettings, so adsOn is false and
-        // the override is always honoured.
+        // A growth feature: locked on for ads-enabled (free) embed domains,
+        // so settings.features.share is honoured only where the domain has
+        // earned NoAds. On the resource page there is no _domainSettings.
         share: true,
-        availableprogress: duration > 0 && !isSession,
         logo: adsOn,
     };
     if (settings && settings.features) {
         for (const name in settings.features) {
-            // Growth-feature lock: settings can only disable share when
-            // the host domain isn't already paying us back via ads.
             if (name === 'share' && adsOn) continue;
             defaults[name] = settings.features[name];
         }
     }
     return defaults;
+}
+
+// controlsListFor maps the page's features onto movi-player's controlslist
+// tokens. The spinner is always off: the buffering label (with the plan's
+// lock) takes its place.
+export function controlsListFor(features) {
+    const off = ['nospinner'];
+    if (!features.playpause) off.push('noplay', 'nocenterplay');
+    if (!features.progress) off.push('noprogress');
+    if (!features.duration) off.push('notime');
+    if (!features.volume) off.push('novolume');
+    if (!features.speed) off.push('nospeed');
+    if (!features.fullscreen) off.push('nofullscreen');
+    if (!features.advancedtracks) off.push('noaudio', 'nocc');
+    return off.join(' ');
+}
+
+// upgradeToMovi puts a <movi-player> where the server-rendered <video> or
+// <audio> is: its attributes (data-* included -- the rest of the page reads
+// them off the player element: the transfer status, the next file, the
+// track picker) and its children (<source>, <track>) move over, `controls`
+// and the box size are the caller's. The element is created after the
+// engine module has registered it, so it is upgraded on creation.
+function upgradeToMovi(media, { controls, features }) {
+    const el = document.createElement('movi-player');
+    for (const a of Array.from(media.attributes)) {
+        if (a.name === 'controls' || a.name === 'width' || a.name === 'height') continue;
+        el.setAttribute(a.name, a.value);
+    }
+    el.setAttribute('wasmurl', wasmURL());
+    el.setAttribute('controlslist', controlsListFor(features));
+    if (controls) el.setAttribute('controls', '');
+    const title = media.dataset.resourceTitle;
+    if (title) el.setAttribute('title', title);
+    while (media.firstChild) el.appendChild(media.firstChild);
+    media.replaceWith(el);
+    return el;
 }
 
 /**
@@ -2281,39 +848,32 @@ function parseFeatures(settings, isVideo, duration, isSession) {
 // The STAGE is the element fullscreen is requested on, and the one thing that
 // outlives a player: moving to the next file (next-item-go.js) destroys this
 // player and mounts another INTO THE SAME STAGE, and a fullscreen element
-// stays fullscreen for as long as it stays in the document, whatever happens
-// to its children. Requested on the player's own container, as it used to
-// be, fullscreen ended with every transition -- and a browser will not
-// re-enter it without a gesture. `opts.stage` is that existing stage; an
-// ordinary start makes its own.
+// stays fullscreen for as long as it stays in the document. `opts.stage` is
+// that existing stage; an ordinary start makes its own.
 export async function initPlayer(target, opts = {}) {
-    const videoEl = target.querySelector('.player');
-    if (!videoEl) return;
+    const media = target.querySelector('video.player, audio.player');
+    if (!media) return;
 
-    // Load player translations before rendering (sync t() reads from cached instance)
-    await initI18n();
-    // A transition may have lost its stage while translations were loading.
-    // It must not register a detached player over the one opened meanwhile.
+    // Translations and the engine before rendering (sync t() reads from the
+    // cached instance; the element must be defined before it is created).
+    await Promise.all([initI18n(), loadEngine()]);
+    // A transition may have lost its stage meanwhile. It must not register a
+    // detached player over the one opened since.
     if (opts.stage && !opts.stage.isConnected) return;
+    if (!media.isConnected) return;
 
     let settings = {};
-    if (videoEl.dataset.settings) {
-        settings = JSON.parse(videoEl.dataset.settings);
+    if (media.dataset.settings) {
+        settings = JSON.parse(media.dataset.settings);
     }
+    const isVideo = media.tagName === 'VIDEO';
+    const showControls = media.hasAttribute('controls');
+    const features = parseFeatures(settings, isVideo);
 
-    // Check if controls should be shown (from HTML controls attribute)
-    const showControls = videoEl.hasAttribute('controls');
+    const fixedWidth = media.getAttribute('width');
+    const fixedHeight = media.getAttribute('height');
 
-    // Remove native controls — we render our own (or none)
-    videoEl.removeAttribute('controls');
-
-    // Transfer fixed dimensions from video to container
-    const fixedWidth = videoEl.getAttribute('width');
-    const fixedHeight = videoEl.getAttribute('height');
-    if (fixedWidth) videoEl.removeAttribute('width');
-    if (fixedHeight) videoEl.removeAttribute('height');
-
-    // Wrap the video in a player container div
+    // Wrap the player in its mount and stage.
     const mountEl = document.createElement('div');
     mountEl.className = 'wt-player-mount';
     if (fixedWidth) mountEl.style.width = fixedWidth;
@@ -2322,49 +882,47 @@ export async function initPlayer(target, opts = {}) {
     if (!stage) {
         stage = document.createElement('div');
         stage.className = 'wt-player-stage';
-        videoEl.parentNode.insertBefore(stage, videoEl);
+        media.parentNode.insertBefore(stage, media);
     }
     stage.appendChild(mountEl);
 
-    // Build the player container with video inside
     const playerContainer = document.createElement('div');
-    // The shape of the picture that was here a moment ago (next-item-go.js).
-    // Until `canplay` reports the real one the container has only the
-    // default 16:9-ish height, shorter or taller than the stage that is
-    // holding the old height -- and the controls, pinned to the container's
-    // bottom, jumped up and back (owner, 2026-09-20). Episodes of a series
-    // share their shape; if this one does not, canplay corrects it.
+    // The shape of the picture that was here a moment ago (next-item-go.js),
+    // until canplay reports this one's.
     if (opts.aspectRatio) playerContainer.style.aspectRatio = opts.aspectRatio;
     mountEl.appendChild(playerContainer);
-    playerContainer.appendChild(videoEl);
+    playerContainer.appendChild(media);
+    const videoEl = upgradeToMovi(media, { controls: showControls, features });
 
-    // Wire track handlers on original modals (stay outside player, no overflow issues).
-    // The modals are wired before Preact renders, so `trackHooks` is the
-    // hand-off point: the component fills it in on mount.
+    // The track picker and the embed dialog are wired on their own modals,
+    // outside the player; `trackHooks` is the hand-off point the component
+    // fills in on mount.
     const trackHooks = {};
     wireTrackHandlers(target, trackHooks);
-
-    // Wire embed copy button
     wireEmbedCopy(target);
 
-    // Wire logo (ads download overlay) — only when ads enabled
+    // The logo (ads download overlay) -- only when ads are on.
     let showLogo = !!(window._domainSettings && window._domainSettings.ads === true);
     if (settings.features && settings.features.logo !== undefined) {
         showLogo = settings.features.logo;
     }
     if (showLogo) wireLogo(target, mountEl);
 
-    // Render Preact controls into the player container (after video)
+    // webtor's layer goes after the element, in a host of its own: Preact
+    // owns that host's children, never the element's.
+    const layer = document.createElement('div');
+    layer.className = 'wt-player-layer';
+    playerContainer.appendChild(layer);
     render(
-        <PlayerComponent videoEl={videoEl} settings={settings} containerEl={playerContainer} showControls={showControls} fixedSize={!!(fixedWidth || fixedHeight)} trackContainer={target} trackHooks={trackHooks} awaitStart={!!opts.awaitStart} restartState={opts.restartState || null} />,
-        playerContainer
+        <PlayerComponent videoEl={videoEl} isVideo={isVideo} settings={settings} containerEl={playerContainer} showControls={showControls} fixedSize={!!(fixedWidth || fixedHeight)} trackContainer={target} trackHooks={trackHooks} awaitStart={!!opts.awaitStart} />,
+        layer
     );
 
-    _currentPlayer = { stage, mountEl, playerContainer, videoEl };
+    _currentPlayer = { stage, mountEl, playerContainer, layer, videoEl };
 }
 
 function wireEmbedCopy(container) {
-    // type="button" — deliberately not a method="dialog" submit, so copying
+    // type="button" -- deliberately not a method="dialog" submit, so copying
     // leaves the embed dialog open.
     const copy = container.querySelector('#embed .copy');
     if (!copy) return;
@@ -2380,14 +938,10 @@ function wireEmbedCopy(container) {
 function wireLogo(container, playerContainer) {
     const logo = container.querySelector('#logo');
     if (!logo) return;
-    // Replace template classes with player-managed class for CSS transitions
     logo.className = 'wt-player-logo';
     playerContainer.appendChild(logo);
 }
 
-/**
- * Destroy current player instance.
- */
 // currentStage: the stage of the player on screen, for a caller that is about
 // to replace that player and wants the next one in the same place.
 export function currentStage() {
@@ -2404,32 +958,18 @@ export function currentAspectRatio() {
 // one (see initPlayer).
 export function destroyPlayer({ keepStage = false } = {}) {
     // Before the early return: "this page's player is gone" is true whether
-    // or not one was mounted, and it is what stands a queued PUT retry
-    // down (persistTrackChoice). The same goes for the picker's 'async'
-    // listener, which is wired by wireTrackHandlers rather than by the
-    // mount and so outlives it.
+    // or not one was mounted (track-dialog.js persistTrackChoice).
     releaseTrackDialog();
-    // The card the lock opened is the viewer's to close, not the player's
-    // (BufferingLabel.jsx openCapCard): a move to the next file (keepStage)
-    // leaves it open; leaving the page takes it.
+    // The card the lock opened is the viewer's to close, not the player's: a
+    // move to the next file (keepStage) leaves it open.
     if (!keepStage) closeCapCard();
     if (!_currentPlayer) return;
-    const { stage, mountEl, playerContainer, videoEl } = _currentPlayer;
+    const { stage, mountEl, layer, videoEl } = _currentPlayer;
 
-    // Destroy HLS
-    if (window.hlsPlayer) {
-        window.hlsPlayer.stopLoad();
-        window.hlsPlayer.destroy();
-        window.hlsPlayer = null;
-    }
-
-    // Unmount Preact
-    render(null, playerContainer);
-
-    // Remove video
+    render(null, layer);
+    // movi-player tears itself down when it leaves the document
+    // (disconnectedCallback): fetches aborted, engine destroyed.
     videoEl.remove();
-
-    // Remove mount point
     mountEl.remove();
     if (stage && !keepStage) stage.remove();
 

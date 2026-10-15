@@ -108,7 +108,7 @@ av(async function() {
         ev.render(el);
         // Download cards and image previews have no player readiness event.
         // An image has no height until it loads: brought into view then.
-        if (!el.querySelector('video, audio')) {
+        if (!el.querySelector('video, audio, movi-player')) {
             reveal();
             const img = el.querySelector('img');
             if (img && !img.complete) img.addEventListener('load', () => bringIntoView(el), { once: true });

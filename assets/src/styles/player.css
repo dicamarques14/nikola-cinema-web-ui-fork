@@ -185,6 +185,29 @@ body[data-iframe-height][data-fixed-height] .wt-player-mount {
     display: none;
 }
 
+/* <movi-player> (Player.jsx) fills the player. It has no intrinsic size the
+   way a <video> has, so a video player is 16:9 until the first canplay sets
+   the picture's own shape inline. It draws its own pointer, controls and
+   spinner: the container's cursor rules for the old controls step aside. */
+.wt-player movi-player {
+    display: block;
+    width: 100%;
+    height: 100%;
+}
+
+.wt-player--movi.wt-player--video {
+    aspect-ratio: 16 / 9;
+}
+
+.wt-player--movi.wt-player--video,
+.wt-player--movi.wt-player--video:not(.wt-player--controls-visible) {
+    cursor: auto;
+}
+
+.wt-player--movi.wt-player--audio movi-player {
+    height: auto;
+}
+
 /* Overlays */
 .wt-player-overlay {
     position: absolute;

@@ -176,15 +176,7 @@ export function usePlayerState(videoRef, containerRef, { duration: serverDuratio
         const video = videoRef.current;
         if (!video) return;
         if (video.paused) {
-            // Native HLS on iOS may not be loaded yet — load first if needed.
-            // Never under hls.js: load() drops the element's MediaSource (its
-            // blob: source) and the player is dead -- the first tap before
-            // any data, on an iPhone that plays through hls.js (`?mms=on`),
-            // or in Chrome.
-            const hls = window.hlsPlayer;
-            if (video.readyState === 0 && !(hls && hls.media === video)) {
-                video.load();
-            }
+            // No load() first: on <movi-player> it starts the source over.
             video.play().catch(() => {});
         } else {
             video.pause();

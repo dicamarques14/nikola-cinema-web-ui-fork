@@ -352,7 +352,7 @@ export async function syncPage(url, { fetchImpl = fetch } = {}) {
     const log = fresh.querySelector('#file [id^="log-"]');
     const live = liveRoot(stageHost);
     if (!log || !live) return false;
-    const video = stageHost.querySelector('video, audio');
+    const video = stageHost.querySelector('video, audio, movi-player');
     const wasPlaying = !!video && !video.paused;
     // The same two halves loadAsyncView performs around a swap, minus the
     // live player: the views of the old card and list are told they are
