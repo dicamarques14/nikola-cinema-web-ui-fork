@@ -55,6 +55,7 @@ func RegisterHandler(r *gin.Engine, tm *template.Manager[*web.Context], svc *url
 	g.GET("/:id/stream", h.stream)
 	g.HEAD("/:id/stream", h.stream)
 	g.GET("/:id/status", h.status)
+	g.POST("/:id/import", h.importNow)
 }
 
 type openBody struct {
@@ -134,6 +135,7 @@ type pageData struct {
 	StreamURL     string
 	StatusURL     string
 	ImportEnabled bool
+	ImportURL     string
 }
 
 func (h *Handler) page(c *gin.Context) {
@@ -152,6 +154,7 @@ func (h *Handler) page(c *gin.Context) {
 		StreamURL:     "/url/" + src.ID.String() + "/stream",
 		StatusURL:     "/url/" + src.ID.String() + "/status",
 		ImportEnabled: h.svc.ImportEnabled(),
+		ImportURL:     "/url/" + src.ID.String() + "/import",
 	}))
 }
 
@@ -199,11 +202,32 @@ type statusView struct {
 	Path          string `json:"path,omitempty"`
 }
 
+// importNow is the player page's Import button: it starts the import of the
+// viewer's source (a no-op when one runs or is done) and answers the status.
+// POST, so the session's CSRF check applies.
+func (h *Handler) importNow(c *gin.Context) {
+	src := h.load(c)
+	if src == nil {
+		return
+	}
+	if !h.svc.ImportEnabled() {
+		c.JSON(http.StatusConflict, gin.H{"error": "import_disabled"})
+		return
+	}
+	h.svc.StartImport(src)
+	c.JSON(http.StatusOK, h.statusOf(c, src))
+}
+
 func (h *Handler) status(c *gin.Context) {
 	src := h.load(c)
 	if src == nil {
 		return
 	}
+	c.Header("Cache-Control", "no-store")
+	c.JSON(http.StatusOK, h.statusOf(c, src))
+}
+
+func (h *Handler) statusOf(c *gin.Context, src *models.UrlSource) statusView {
 	v := statusView{Status: string(src.Status), Total: src.Size, ImportEnabled: h.svc.ImportEnabled()}
 	if p := h.svc.Progress(src.ID); p != nil {
 		v.Status = string(models.UrlSourceImporting)
@@ -220,8 +244,7 @@ func (h *Handler) status(c *gin.Context) {
 		v.ResourceURL = i18n.LangPath(i18n.GetLang(c), "/"+*src.InfoHash) + "?file-idx=0#action=stream"
 		v.Path = "/" + src.Filename
 	}
-	c.Header("Cache-Control", "no-store")
-	c.JSON(http.StatusOK, v)
+	return v
 }
 
 // seed is the torrent's web seed. Whoever holds the URL may read the file;

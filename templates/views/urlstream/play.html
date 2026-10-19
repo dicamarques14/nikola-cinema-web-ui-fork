@@ -2,10 +2,13 @@
 {{ define "main" }}
 {{ with .Data }}
 {{/* A Stremio addon stream that is a plain HTTP(S) file (docs/url_streams.md):
-     played through /url/:id/stream while the import turns it into a torrent;
+     played through /url/:id/stream; the Import button (POST /url/:id/import)
+     turns it into a torrent;
      no picker, no Vault, no share -- movi-player's own menus stand in. */}}
 <section class="min-h-screen pt-20 sm:pt-24 pb-10 px-3 sm:px-6" id="url-player"
          data-status-url="{{ .StatusURL }}"
+         data-import-url="{{ .ImportURL }}"
+         data-l-import-error="{{ t $.Lang "urlstream.importError" }}"
          data-import="{{ .ImportEnabled }}"
          data-l-queued="{{ t $.Lang "urlstream.queued" }}"
          data-l-downloading="{{ t $.Lang "urlstream.downloading" }}"
@@ -30,6 +33,8 @@
     </div>
     <div id="url-import-status" class="mt-3 flex flex-wrap items-center gap-3 text-sm text-w-sub" hidden>
       <span class="url-import-text"></span>
+      <button type="button" class="url-import-start btn btn-sm btn-primary" hidden title="{{ t $.Lang "urlstream.importHint" }}">{{ t $.Lang "urlstream.importButton" }}</button>
+      <a class="url-import-open btn btn-sm btn-ghost" hidden>{{ t $.Lang "urlstream.openImported" }}</a>
       <button type="button" class="url-import-go btn btn-sm btn-primary" hidden>{{ t $.Lang "urlstream.switchNow" }}</button>
       <button type="button" class="url-import-stay btn btn-sm btn-ghost" hidden>{{ t $.Lang "urlstream.stay" }}</button>
     </div>

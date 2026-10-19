@@ -2201,5 +2201,9 @@
     "urlstream.switchNow": "Перейти сейчас",
     "urlstream.stay": "Остаться здесь",
     "urlstream.failed": "Импорт не удался. Воспроизведение продолжается из источника.",
-    "urlstream.proxyOnly": "Смотрите напрямую из источника аддона."
+    "urlstream.proxyOnly": "Смотрите напрямую из источника аддона.",
+    "urlstream.importButton": "Импортировать в Webtor",
+    "urlstream.importHint": "Загружает файл в Webtor: субтитры, библиотека, Vault и продолжение просмотра, даже когда ссылка аддона истечёт.",
+    "urlstream.openImported": "Открыть импортированную версию",
+    "urlstream.importError": "Не удалось запустить импорт. Попробуйте ещё раз."
 }

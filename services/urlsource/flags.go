@@ -8,6 +8,7 @@ const (
 	MaxBytesFlag    = "url-import-max-bytes"
 	SeedBaseURLFlag = "url-seed-base-url"
 	ConcurrencyFlag = "url-import-concurrency"
+	AutoImportFlag  = "url-import-auto"
 )
 
 // RegisterFlags adds the direct-URL stream settings (docs/url_streams.md).
@@ -40,6 +41,11 @@ func RegisterFlags(f []cli.Flag) []cli.Flag {
 			Usage:  "how many direct-URL imports run at once",
 			Value:  2,
 			EnvVar: "URL_IMPORT_CONCURRENCY",
+		},
+		cli.BoolFlag{
+			Name:   AutoImportFlag,
+			Usage:  "start the import as soon as a direct-URL stream is opened (default: only on the player page's Import button)",
+			EnvVar: "URL_IMPORT_AUTO",
 		},
 	)
 }

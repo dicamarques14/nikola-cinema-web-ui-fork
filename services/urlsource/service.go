@@ -49,6 +49,7 @@ type Service struct {
 	addonCl     *http.Client
 	mediaCl     *http.Client
 	store       StoreFunc
+	autoImport  bool
 	sem         chan struct{}
 	mu          sync.Mutex
 	running     map[uuid.UUID]*Progress
@@ -69,19 +70,20 @@ func New(c *cli.Context, pg *cs.PG, addonCl *http.Client) *Service {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Service{
-		pg:        pg,
-		dir:       c.String(ImportDirFlag),
-		maxBytes:  c.Int64(MaxBytesFlag),
-		seedBase:  strings.TrimRight(c.String(SeedBaseURLFlag), "/"),
-		secret:    []byte(c.String(common.SessionSecretFlag)),
-		userAgent: c.String(stremio.StremioUserAgentFlag),
-		addonCl:   addonCl,
-		mediaCl:   newMediaClient(c.Bool(stremio.StremioAllowPrivateNetworkFlag)),
-		sem:       make(chan struct{}, conc),
-		running:   map[uuid.UUID]*Progress{},
-		touched:   map[string]time.Time{},
-		ctx:       ctx,
-		cancel:    cancel,
+		pg:         pg,
+		dir:        c.String(ImportDirFlag),
+		maxBytes:   c.Int64(MaxBytesFlag),
+		seedBase:   strings.TrimRight(c.String(SeedBaseURLFlag), "/"),
+		autoImport: c.Bool(AutoImportFlag),
+		secret:     []byte(c.String(common.SessionSecretFlag)),
+		userAgent:  c.String(stremio.StremioUserAgentFlag),
+		addonCl:    addonCl,
+		mediaCl:    newMediaClient(c.Bool(stremio.StremioAllowPrivateNetworkFlag)),
+		sem:        make(chan struct{}, conc),
+		running:    map[uuid.UUID]*Progress{},
+		touched:    map[string]time.Time{},
+		ctx:        ctx,
+		cancel:     cancel,
 	}
 	if db := pg.Get(); db != nil {
 		if err := models.ResetStaleUrlSourceImports(ctx, db); err != nil {

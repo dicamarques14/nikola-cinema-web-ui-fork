@@ -2161,5 +2161,9 @@
     "urlstream.switchNow": "Jetzt wechseln",
     "urlstream.stay": "Hier bleiben",
     "urlstream.failed": "Import fehlgeschlagen. Die Wiedergabe läuft von der Quelle weiter.",
-    "urlstream.proxyOnly": "Wiedergabe direkt von der Quelle des Addons."
+    "urlstream.proxyOnly": "Wiedergabe direkt von der Quelle des Addons.",
+    "urlstream.importButton": "In Webtor importieren",
+    "urlstream.importHint": "Lädt die Datei in Webtor: Untertitel, Bibliothek, Vault und Fortsetzen, auch wenn der Link des Addons abläuft.",
+    "urlstream.openImported": "Importierte Version öffnen",
+    "urlstream.importError": "Der Import konnte nicht gestartet werden. Versuche es erneut."
 }

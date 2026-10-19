@@ -2161,5 +2161,9 @@
     "urlstream.switchNow": "Nu overschakelen",
     "urlstream.stay": "Hier blijven",
     "urlstream.failed": "Import mislukt. Afspelen gaat door vanaf de bron.",
-    "urlstream.proxyOnly": "Speelt rechtstreeks vanaf de bron van de add-on."
+    "urlstream.proxyOnly": "Speelt rechtstreeks vanaf de bron van de add-on.",
+    "urlstream.importButton": "Importeren in Webtor",
+    "urlstream.importHint": "Downloadt het bestand naar Webtor: ondertitels, bibliotheek, Vault en verder kijken, ook als de link van de add-on verloopt.",
+    "urlstream.openImported": "Geïmporteerde versie openen",
+    "urlstream.importError": "De import kon niet worden gestart. Probeer het opnieuw."
 }

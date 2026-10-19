@@ -2169,5 +2169,9 @@
     "urlstream.switchNow": "Basculer maintenant",
     "urlstream.stay": "Rester ici",
     "urlstream.failed": "L'import a échoué. La lecture continue depuis la source.",
-    "urlstream.proxyOnly": "Lecture directe depuis la source de l'addon."
+    "urlstream.proxyOnly": "Lecture directe depuis la source de l'addon.",
+    "urlstream.importButton": "Importer dans Webtor",
+    "urlstream.importHint": "Télécharge le fichier dans Webtor : sous-titres, bibliothèque, Vault et reprise, même après l'expiration du lien de l'addon.",
+    "urlstream.openImported": "Ouvrir la version importée",
+    "urlstream.importError": "Impossible de lancer l'import. Réessayez."
 }

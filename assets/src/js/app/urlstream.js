@@ -1,8 +1,10 @@
 // The direct-URL player page (templates/views/urlstream/play.html,
 // docs/url_streams.md): movi-player on /url/:id/stream, and the import's
-// status under it. Once the import has made a torrent of the file, the page
-// moves to the ordinary resource page -- with the position carried over
-// through the same PUT /watch/position the player uses.
+// import under it. The import is the viewer's choice: an Import button
+// (POST /url/:id/import) starts it. Once an import started here has made a
+// torrent of the file, the page moves to the ordinary resource page -- with
+// the position carried over through the same PUT /watch/position the player
+// uses. A source imported earlier only gets an "Open imported version" link.
 import av from '../lib/av';
 
 const POLL_MS = 3000;
@@ -41,12 +43,17 @@ function watchImport(root, id) {
     const text = box.querySelector('.url-import-text');
     const go = box.querySelector('.url-import-go');
     const stay = box.querySelector('.url-import-stay');
+    const start = box.querySelector('.url-import-start');
+    const open = box.querySelector('.url-import-open');
     const l = root.dataset;
     let timer = null;
     let countdown = null;
     let stopped = false;
     let stayed = false;
     let status = null;
+    // Whether this page view saw the import run: only then does it count
+    // down to the switch.
+    let sawImport = false;
 
     const show = (msg) => { box.hidden = false; text.textContent = msg; };
     const switchNow = async () => {
@@ -57,6 +64,30 @@ function watchImport(root, id) {
         window.location.assign(status.resource_url);
     };
     go.addEventListener('click', switchNow);
+    open.addEventListener('click', async (e) => {
+        if (!status || !status.resource_url) return;
+        e.preventDefault();
+        await switchNow();
+    });
+    start.addEventListener('click', async () => {
+        start.disabled = true;
+        try {
+            const res = await fetch(root.dataset.importUrl, {
+                method: 'POST',
+                headers: { Accept: 'application/json', 'X-CSRF-TOKEN': window._CSRF || '' },
+            });
+            if (!res.ok) throw new Error('import failed');
+            status = await res.json();
+            start.hidden = true;
+            sawImport = true;
+            clearTimeout(timer);
+            poll();
+        } catch (e) {
+            show(l.lImportError);
+        } finally {
+            start.disabled = false;
+        }
+    });
     stay.addEventListener('click', () => {
         stayed = true;
         clearInterval(countdown);
@@ -87,10 +118,25 @@ function watchImport(root, id) {
         if (stopped) return;
         if (status) {
             const pct = status.total > 0 ? Math.min(100, Math.floor(status.done * 100 / status.total)) : 0;
-            if (status.status === 'imported' && status.resource_url) { ready(); return; }
-            if (status.status === 'failed') { show(l.lFailed); return; }
+            if (status.status === 'imported' && status.resource_url) {
+                start.hidden = true;
+                if (sawImport) { ready(); return; }
+                open.href = status.resource_url;
+                open.hidden = false;
+                text.textContent = '';
+                box.hidden = false;
+                return;
+            }
             if (!status.import_enabled) { show(l.lProxyOnly); return; }
+            if (status.status === 'new' || status.status === 'failed') {
+                // Nothing runs: offer the import, and stop asking.
+                show(status.status === 'failed' ? l.lFailed : '');
+                start.hidden = false;
+                return;
+            }
             if (status.status === 'importing') {
+                sawImport = true;
+                start.hidden = true;
                 if (status.phase === 'downloading') show(fill(l.lDownloading, pct));
                 else if (status.phase === 'hashing') show(fill(l.lHashing, pct));
                 else if (status.phase === 'storing') show(l.lStoring);

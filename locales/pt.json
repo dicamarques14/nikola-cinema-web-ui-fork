@@ -2169,5 +2169,9 @@
     "urlstream.switchNow": "Mudar agora",
     "urlstream.stay": "Ficar aqui",
     "urlstream.failed": "A importação falhou. A reprodução continua a partir da fonte.",
-    "urlstream.proxyOnly": "Reproduzindo direto da fonte do addon."
+    "urlstream.proxyOnly": "Reproduzindo direto da fonte do addon.",
+    "urlstream.importButton": "Importar para o Webtor",
+    "urlstream.importHint": "Baixa o arquivo para o Webtor: legendas, biblioteca, Vault e retomada, mesmo depois que o link do addon expirar.",
+    "urlstream.openImported": "Abrir versão importada",
+    "urlstream.importError": "Não foi possível iniciar a importação. Tente de novo."
 }

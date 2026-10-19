@@ -2201,5 +2201,9 @@
     "urlstream.switchNow": "Přepnout hned",
     "urlstream.stay": "Zůstat zde",
     "urlstream.failed": "Import se nezdařil. Přehrávání pokračuje ze zdroje.",
-    "urlstream.proxyOnly": "Přehrává se přímo ze zdroje doplňku."
+    "urlstream.proxyOnly": "Přehrává se přímo ze zdroje doplňku.",
+    "urlstream.importButton": "Importovat do Webtoru",
+    "urlstream.importHint": "Stáhne soubor do Webtoru: titulky, knihovna, Vault a pokračování i po vypršení odkazu doplňku.",
+    "urlstream.openImported": "Otevřít importovanou verzi",
+    "urlstream.importError": "Import se nepodařilo spustit. Zkuste to znovu."
 }

@@ -2273,5 +2273,9 @@
     "urlstream.switchNow": "Switch now",
     "urlstream.stay": "Stay here",
     "urlstream.failed": "Import failed. Playback continues from the source.",
-    "urlstream.proxyOnly": "Playing straight from the addon's source."
+    "urlstream.proxyOnly": "Playing straight from the addon's source.",
+    "urlstream.importButton": "Import to Webtor",
+    "urlstream.importHint": "Downloads the file into Webtor: subtitles, library, Vault and resume, even after the addon's link expires.",
+    "urlstream.openImported": "Open imported version",
+    "urlstream.importError": "Could not start the import. Try again."
 }

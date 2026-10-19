@@ -176,8 +176,9 @@ func (s *Service) fetchAddonStreams(ctx context.Context, addonURL, typ, id strin
 }
 
 // Open is a click on a direct-URL row: the server asks the addon itself
-// (the browser's copy of the link is only a key to find it), records the
-// stream, and starts its import.
+// (the browser's copy of the link is only a key to find it) and records the
+// stream for the proxy. The import starts only when the viewer asks for it
+// (Import, POST /url/:id/import), or here with URL_IMPORT_AUTO.
 func (s *Service) Open(ctx context.Context, userID uuid.UUID, r *OpenRequest) (*models.UrlSource, error) {
 	if !typeRe.MatchString(r.Type) || !idRe.MatchString(r.ID) {
 		return nil, errors.New("bad stream id")
@@ -219,7 +220,9 @@ func (s *Service) Open(ctx context.Context, userID uuid.UUID, r *OpenRequest) (*
 			}
 			existing.Url, existing.ProxyHeaders = st.Url, headers
 		}
-		s.StartImport(existing)
+		if s.autoImport {
+			s.StartImport(existing)
+		}
 		return existing, nil
 	}
 	title := strings.TrimSpace(r.Title)
@@ -241,7 +244,9 @@ func (s *Service) Open(ctx context.Context, userID uuid.UUID, r *OpenRequest) (*
 	if err := models.CreateUrlSource(ctx, db, src); err != nil {
 		return nil, err
 	}
-	s.StartImport(src)
+	if s.autoImport {
+		s.StartImport(src)
+	}
 	return src, nil
 }
 

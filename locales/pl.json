@@ -2201,5 +2201,9 @@
     "urlstream.switchNow": "Przełącz teraz",
     "urlstream.stay": "Zostań tutaj",
     "urlstream.failed": "Import nie powiódł się. Odtwarzanie trwa ze źródła.",
-    "urlstream.proxyOnly": "Odtwarzanie bezpośrednio ze źródła dodatku."
+    "urlstream.proxyOnly": "Odtwarzanie bezpośrednio ze źródła dodatku.",
+    "urlstream.importButton": "Importuj do Webtor",
+    "urlstream.importHint": "Pobiera plik do Webtor: napisy, biblioteka, Vault i wznawianie, nawet po wygaśnięciu linku dodatku.",
+    "urlstream.openImported": "Otwórz zaimportowaną wersję",
+    "urlstream.importError": "Nie udało się rozpocząć importu. Spróbuj ponownie."
 }

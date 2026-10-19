@@ -24,6 +24,7 @@ func TestRoutesCoexistWithResourcePage(t *testing.T) {
 	g.GET("/:id", name("page"))
 	g.GET("/:id/stream", name("stream"))
 	g.GET("/:id/status", name("status"))
+	g.POST("/:id/import", name("import"))
 	for path, want := range map[string]string{
 		"/urlseed/a/b/Film%20(2024).mkv": "seed",
 		"/url/x":                         "page",
@@ -36,6 +37,13 @@ func TestRoutesCoexistWithResourcePage(t *testing.T) {
 		r.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
 		if w.Body.String() != want {
 			t.Errorf("%s reached %q (%d), want %q", path, w.Body.String(), w.Code, want)
+		}
+	}
+	for path, want := range map[string]string{"/url/open": "open", "/url/x/import": "import"} {
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest("POST", path, nil))
+		if w.Body.String() != want {
+			t.Errorf("POST %s reached %q (%d), want %q", path, w.Body.String(), w.Code, want)
 		}
 	}
 }

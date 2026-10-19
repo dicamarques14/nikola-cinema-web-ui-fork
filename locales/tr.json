@@ -2161,5 +2161,9 @@
     "urlstream.switchNow": "Şimdi geç",
     "urlstream.stay": "Burada kal",
     "urlstream.failed": "Aktarma başarısız oldu. Oynatma kaynaktan devam ediyor.",
-    "urlstream.proxyOnly": "Doğrudan eklentinin kaynağından oynatılıyor."
+    "urlstream.proxyOnly": "Doğrudan eklentinin kaynağından oynatılıyor.",
+    "urlstream.importButton": "Webtor'a aktar",
+    "urlstream.importHint": "Dosyayı Webtor'a indirir: altyazılar, kitaplık, Vault ve kaldığı yerden devam, eklentinin bağlantısının süresi dolsa bile.",
+    "urlstream.openImported": "Aktarılan sürümü aç",
+    "urlstream.importError": "Aktarma başlatılamadı. Tekrar deneyin."
 }
