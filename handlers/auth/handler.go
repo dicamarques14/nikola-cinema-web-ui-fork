@@ -4,10 +4,13 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-contrib/sessions"
+	wsess "github.com/webtor-io/web-ui/handlers/session"
 	"github.com/webtor-io/web-ui/services/adminauth"
 	"github.com/webtor-io/web-ui/services/auth"
+	"github.com/webtor-io/web-ui/services/devicelogin"
 	"github.com/webtor-io/web-ui/services/libapi"
 	"github.com/webtor-io/web-ui/services/web"
 
@@ -103,6 +106,9 @@ type Handler struct {
 	// *auth.Auth (its fields are unexported outside services/auth).
 	passwordFormActive func(*gin.Context) bool
 	loginLimiter       *libapi.RateLimiter
+	// devices backs sign-in from another device (QR code / short code). Nil
+	// without redis, in which case the password form renders alone.
+	devices *devicelogin.Store
 	// identityManagedExternally is the capability the SuperTokens-only
 	// surfaces hang on: whether an external identity provider owns identity
 	// here at all.
@@ -113,6 +119,9 @@ type Handler struct {
 // i18n key rather than a message so the copy stays in the locales.
 type PasswordLoginData struct {
 	Err string
+	// Device is the "sign in with your phone" panel beside the password
+	// form; nil when device login is unavailable.
+	Device *DeviceLoginData
 }
 
 func RegisterHandler(r *gin.Engine, tm *template.Manager[*web.Context], a *auth.Auth, rdb redis.UniversalClient) {
@@ -126,6 +135,9 @@ func RegisterHandler(r *gin.Engine, tm *template.Manager[*web.Context], a *auth.
 		passwordFormActive: a.AdminPasswordActive,
 
 		identityManagedExternally: a.IdentityManagedExternally(),
+	}
+	if rdb != nil {
+		h.devices = devicelogin.New(rdb)
 	}
 
 	// /login and /logout exist in both worlds: the first serves the local
@@ -143,6 +155,7 @@ func RegisterHandler(r *gin.Engine, tm *template.Manager[*web.Context], a *auth.
 	r.GET("/login", h.login)
 	r.POST("/login", h.passwordLogin)
 	r.GET("/logout", h.logout)
+	h.registerDeviceLogin(r)
 
 	if !a.IdentityManagedExternally() {
 		return
@@ -182,6 +195,9 @@ func (s *Handler) renderPassword(c *gin.Context, code int, data PasswordLoginDat
 	if s.tb == nil {
 		c.Status(code)
 		return
+	}
+	if data.Device == nil {
+		data.Device = s.deviceLoginData(c)
 	}
 	s.tb.Build("auth/password").HTML(code, web.NewContext(c).WithData(data))
 }
@@ -226,6 +242,9 @@ func (s *Handler) login(c *gin.Context) {
 	if view == "" {
 		c.Redirect(http.StatusFound, "/")
 		return
+	}
+	if view == "auth/password" {
+		data = PasswordLoginData{Device: s.deviceLoginData(c)}
 	}
 	if s.tb == nil {
 		c.Status(http.StatusOK)
@@ -280,8 +299,26 @@ func (s *Handler) passwordLogin(c *gin.Context) {
 		s.renderPassword(c, http.StatusUnauthorized, PasswordLoginData{Err: "auth.password.wrong"})
 		return
 	}
+	returnURL, err := s.signIn(c)
+	if err != nil {
+		s.renderPassword(c, http.StatusInternalServerError, PasswordLoginData{Err: "auth.password.sessionFailed"})
+		return
+	}
+	c.Redirect(http.StatusFound, returnURL)
+}
+
+// signIn turns the current session into an admin session: a fresh session ID
+// (see wsess.Rotate), the admin flag, and the return-url the login page
+// stashed. Shared by the password and the device sign-in so both end the
+// same way.
+func (s *Handler) signIn(c *gin.Context) (string, error) {
+	if err := wsess.Rotate(c); err != nil {
+		return "", err
+	}
 	session := sessions.Default(c)
 	session.Set(auth.AdminSessionKey, true)
+	session.Set(auth.AdminRenewedAtKey, time.Now().Unix())
+	session.Delete(deviceTokenKey)
 	// Task 5 sends unauthenticated navigations to /login?return-url=<path>,
 	// and the GET handler above stashes that value in the session. Send a
 	// successful login back where the visitor was headed, then clear it —
@@ -292,10 +329,9 @@ func (s *Handler) passwordLogin(c *gin.Context) {
 		session.Delete("return-url")
 	}
 	if err := session.Save(); err != nil {
-		s.renderPassword(c, http.StatusInternalServerError, PasswordLoginData{Err: "auth.password.sessionFailed"})
-		return
+		return "", err
 	}
-	c.Redirect(http.StatusFound, returnURL)
+	return returnURL, nil
 }
 
 func (s *Handler) logout(c *gin.Context) {

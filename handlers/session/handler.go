@@ -21,6 +21,12 @@ const (
 	redisHostFlag = "session-redis-host"
 	redisPortFlag = "session-redis-port"
 	redisPassFlag = "session-redis-pass"
+	maxAgeFlag    = "session-max-age"
+
+	// DefaultMaxAge is the session lifetime when SESSION_MAX_AGE is unset:
+	// 30 days, renewed while the session is in use (see
+	// auth.RenewAdminSession), so a device in regular use stays signed in.
+	DefaultMaxAge = 86400 * 30
 )
 
 func RegisterFlags(f []cli.Flag) []cli.Flag {
@@ -34,6 +40,12 @@ func RegisterFlags(f []cli.Flag) []cli.Flag {
 			Name:   redisPassFlag,
 			Usage:  "session redis pass",
 			EnvVar: "REDIS_PASS",
+		},
+		cli.IntFlag{
+			Name:   maxAgeFlag,
+			Usage:  "session cookie and store lifetime in seconds",
+			Value:  DefaultMaxAge,
+			EnvVar: "SESSION_MAX_AGE",
 		},
 		cli.IntFlag{
 			Name:   redisPortFlag,
@@ -77,9 +89,13 @@ func RegisterHandler(c *cli.Context, r *gin.Engine, csrfIgnorePrefixes []string)
 		sameSite = http.SameSiteLaxMode
 		secure = false
 	}
+	maxAge := c.Int(maxAgeFlag)
+	if maxAge <= 0 {
+		maxAge = DefaultMaxAge
+	}
 	store.Options(sessions.Options{
 		Path:     "/",
-		MaxAge:   86400 * 30,
+		MaxAge:   maxAge,
 		Secure:   secure,
 		HttpOnly: true,
 		SameSite: sameSite,

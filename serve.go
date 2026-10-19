@@ -293,6 +293,11 @@ func serve(c *cli.Context) error {
 	}
 	r.Use(metrics.Mark("sess"))
 
+	// Slide a signed-in administrator's session forward once a day, so a
+	// device in regular use (a car's browser) is not asked to sign in again
+	// when SESSION_MAX_AGE runs out. Needs only the session above.
+	r.Use(auth.RenewAdminSession())
+
 	// Setting Auth
 	a := auth.New(c, cl, pg)
 

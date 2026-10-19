@@ -1,0 +1,48 @@
+{{ define "title" }}{{ t $.Lang "auth.device.approveTitle" }}{{ end }}
+{{ define "description" }}
+    <meta name="robots" content="noindex">
+{{ end }}
+{{ define "main" }}
+<section class="min-h-screen pt-[120px] pb-20 px-3 sm:px-6">
+  <div class="max-w-sm mx-auto">
+
+    <div class="text-center mb-8">
+      <h1 class="text-[clamp(1.8rem,4vw,2.4rem)] font-extrabold tracking-tight leading-tight mb-2">{{ t $.Lang "auth.device.approveTitle" }}</h1>
+    </div>
+
+    <div class="bg-w-card border border-w-line rounded-2xl p-6">
+      {{ if .Data.Err }}
+      <div class="bg-error/10 border border-error/30 rounded-2xl p-4 mb-5">
+        <p class="text-sm text-error">{{ t $.Lang .Data.Err }}</p>
+      </div>
+      {{ end }}
+
+      {{ if .Data.Done }}
+        <p class="text-center">{{ t $.Lang "auth.device.approved" }}</p>
+      {{ else if .Data.Token }}
+        {{/* The code is what makes this safe to tap: it must match the
+             screen of the device being signed in, so a QR code someone else
+             put in front of you cannot slip through unnoticed. */}}
+        <p class="text-w-sub text-sm mb-3">{{ t $.Lang "auth.device.confirm" }}</p>
+        <p class="font-mono text-3xl font-extrabold tracking-widest text-center mb-3">{{ .Data.Code }}</p>
+        {{ if .Data.UserAgent }}<p class="text-w-sub text-xs break-words mb-5">{{ .Data.UserAgent }}</p>{{ end }}
+        <form method="post" action="/login/approve">
+          <input type="hidden" name="_csrf" value="{{ $.CSRF }}" />
+          <input type="hidden" name="t" value="{{ .Data.Token }}" />
+          <input type="hidden" name="code" value="{{ .Data.Code }}" />
+          <button type="submit" class="btn btn-pink w-full">{{ t $.Lang "auth.device.approve" }}</button>
+        </form>
+      {{ else }}
+        <form method="get" action="/login/approve">
+          <p class="text-w-sub text-sm mb-3">{{ t $.Lang "auth.device.enterCode" }}</p>
+          <input type="text" name="code" autocomplete="off" autocapitalize="characters" autofocus required maxlength="12"
+                 class="input w-full font-mono uppercase tracking-widest bg-base-300 border-w-line focus:border-w-pink focus:outline-none mb-4"
+                 placeholder="ABC-DEF" />
+          <button type="submit" class="btn btn-pink w-full">{{ t $.Lang "auth.device.next" }}</button>
+        </form>
+      {{ end }}
+    </div>
+
+  </div>
+</section>
+{{ end }}
