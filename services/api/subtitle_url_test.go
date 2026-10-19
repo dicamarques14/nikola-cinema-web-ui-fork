@@ -61,3 +61,20 @@ func TestMakeSubtitleURLConvertsTextFormats(t *testing.T) {
 		})
 	}
 }
+
+func TestAttachExternalSubtitleEncodesFilenameOnce(t *testing.T) {
+	ei := ra.ExportItem{URL: "https://edge.example.com/hash/file.mp4?token=abc"}
+	// PublicURL PathEscapes the name; AttachExternalFile must not escape the
+	// already-escaped segment again (%20 → %2520), or torrent-http-proxy 404s.
+	u := "https://webtor.io/user-subtitle/file/deadbeef/Universal%20Basic%20Guys.srt"
+	res := (&Api{}).AttachExternalSubtitle(ei, u)
+	if strings.Contains(res, "%2520") {
+		t.Fatalf("filename was double-encoded: %s", res)
+	}
+	if !strings.Contains(res, "Universal%20Basic%20Guys.srt~vtt/Universal%20Basic%20Guys.vtt") {
+		t.Fatalf("expected single-encoded .srt~vtt/.vtt suffix, got: %s", res)
+	}
+	if !strings.HasSuffix(res, "?token=abc") {
+		t.Fatalf("export-item query lost: %s", res)
+	}
+}

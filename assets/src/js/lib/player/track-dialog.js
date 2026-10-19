@@ -194,7 +194,17 @@ export function activateSubtitle(container, target, { persist = true } = {}) {
     const bridge = bridgeFor(container);
     if (!bridge) return;
     const video = container.querySelector('.player');
-    bridge.showSubtitle(selectionFrom(video, target));
+    const picked = target;
+    return bridge.showSubtitle(selectionFrom(video, target)).then((ok) => {
+        // markTrack ran before the fetch; a failed side-load must not leave
+        // the chip looking selected with nothing on screen.
+        if (ok !== false) return ok;
+        if (!picked || picked.getAttribute('data-id') === 'none') return ok;
+        const modal = findSubtitlesModal(container);
+        const off = modal ? findSubtitleItem(modal, 'none') : null;
+        if (off && off !== picked) activateSubtitle(container, off, { persist: false });
+        return ok;
+    });
 }
 
 export function toggleDialog(id) {

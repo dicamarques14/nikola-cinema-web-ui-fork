@@ -1097,8 +1097,21 @@ func (s *Api) AttachExternalSubtitle(ei ra.ExportItem, u string) string {
 
 func (s *Api) AttachExternalFile(ei ra.ExportItem, u string) string {
 	src, _ := url.Parse(ei.URL)
-	nameParts := strings.Split(u, "/")
-	name := nameParts[len(nameParts)-1]
+	// Decorative trailing name for /ext/<payload>/<name>. Take it from the
+	// parsed (decoded) path, not by splitting the raw string: PublicURL
+	// already PathEscapes the filename, and PathEscape("%20") is "%2520",
+	// which made uploaded SRTs with spaces 404 in torrent-http-proxy.
+	name := ""
+	if parsedU, err := url.Parse(u); err == nil && parsedU.Path != "" {
+		parts := strings.Split(strings.Trim(parsedU.Path, "/"), "/")
+		if len(parts) > 0 {
+			name = parts[len(parts)-1]
+		}
+	}
+	if name == "" {
+		nameParts := strings.Split(u, "/")
+		name = nameParts[len(nameParts)-1]
+	}
 	// QueryEscape is needed to keep base64's '/' and '=' path-safe,
 	// but if we then store the escaped string in url.URL.Path and call
 	// String(), Go re-percent-encodes the '%' chars (e.g. '%3D%3D' →

@@ -732,10 +732,16 @@ func serve(c *cli.Context) error {
 //     for exactly the visitors most likely to want it. It exposes no user
 //     data: the handler renders payment options and takes a checkout.
 //
+//   - /user-subtitle/file is the raw uploaded-subtitle blob. It is addressed
+//     by content hash (unguessable) and must stay reachable without a
+//     session: torrent-http-proxy fetches it server-side to run the ~vtt
+//     transform, with no cookie. Broader /user-subtitle stays gated (upload
+//     and delete still need HasAuth).
+//
 // Kept as a named function rather than inline so the policy is greppable and
 // can be asserted in a test.
 func onlyAuthorizedExempt() []string {
-	return []string{libapi.MountPath, "/stremio", s3svc.MountPath, "/embed", "/donate", "/profile/email/verify"}
+	return []string{libapi.MountPath, "/stremio", s3svc.MountPath, "/embed", "/donate", "/profile/email/verify", "/user-subtitle/file"}
 }
 
 // requireSessionSecret refuses to start without SESSION_SECRET.

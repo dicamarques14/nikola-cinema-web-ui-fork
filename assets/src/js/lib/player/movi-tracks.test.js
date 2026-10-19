@@ -22,6 +22,9 @@ function fakeElement({ ready = true } = {}) {
     return { el, player, calls, gate };
 }
 
+const SAMPLE = 'WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nx\n';
+const fetchSample = async () => SAMPLE;
+
 test('parseVttCues: timings, multi-line text, tags and settings dropped', () => {
     const cues = parseVttCues('﻿WEBVTT\n\nNOTE a comment\n\n1\n00:00:01.000 --> 00:00:03.500 align:start\nHello <i>there</i>\nsecond line\n\n01:02:03,250 --> 01:02:04,000\nSRT style\n\n00:00:09.000 --> 00:00:08.000\nbackwards\n\n00:00:10.000 --> 00:00:11.000\n\n');
     assert.deepEqual(cues, [
@@ -40,41 +43,42 @@ test('formatOf: the proxy\'s ~vtt is WebVTT whatever the name says', () => {
     assert.equal(formatOf('https://h/ext/abc/name'), undefined);
 });
 
-test('a side-loaded track is registered under its chip id and selected by it', async () => {
+test('a side-loaded track is fetched, parsed and selected by its chip id', async () => {
     const { el, calls } = fakeElement();
-    const b = createTrackBridge(el);
+    const b = createTrackBridge(el, { fetchText: fetchSample });
     assert.equal(await b.showSubtitle({ id: 'os-7', provider: 'OpenSubtitles', src: 'https://h/os7.srt~vtt', label: 'English' }), true);
     assert.deepEqual(calls, [
-        ['add', { url: 'https://h/os7.srt~vtt', lang: 'os-7', label: 'English', format: 'vtt' }],
+        ['append', 'os-7', 'English', 1, false],
         ['lang', 'os-7'],
     ]);
     assert.equal(b.activeId(), 'os-7');
     assert.equal(b.activeStream(), null);
+    assert.equal(b.cuesOf('os-7').length, 1);
 });
 
 test('two tracks in one language do not replace each other: the key is the id', async () => {
     const { el, calls } = fakeElement();
-    const b = createTrackBridge(el);
+    const b = createTrackBridge(el, { fetchText: fetchSample });
     await b.showSubtitle({ id: 'os-1', provider: 'OpenSubtitles', src: 'https://h/1.vtt', label: 'English' });
     await b.showSubtitle({ id: 'os-2', provider: 'OpenSubtitles', src: 'https://h/2.vtt', label: 'English (SDH)' });
-    const keys = calls.filter((c) => c[0] === 'add').map((c) => c[1].lang);
+    const keys = calls.filter((c) => c[0] === 'append').map((c) => c[1]);
     assert.deepEqual(keys, ['os-1', 'os-2']);
 });
 
-test('the same track picked again is not added again', async () => {
+test('the same track picked again re-fetches and appends cues again', async () => {
     const { el, calls } = fakeElement();
-    const b = createTrackBridge(el);
+    const b = createTrackBridge(el, { fetchText: fetchSample });
     const sel = { id: 'us-1', provider: 'UserSubtitle', src: 'https://h/u.vtt', label: 'Mine' };
     await b.showSubtitle(sel);
     await b.showSubtitle(sel);
-    assert.equal(calls.filter((c) => c[0] === 'add').length, 1);
+    assert.equal(calls.filter((c) => c[0] === 'append').length, 2);
     await b.showSubtitle({ ...sel, src: 'https://h/u.vtt?token=new' });
-    assert.equal(calls.filter((c) => c[0] === 'add').length, 2, 'a rotated URL replaces the entry');
+    assert.equal(calls.filter((c) => c[0] === 'append').length, 3);
 });
 
 test('an embedded track is selected by the file\'s stream index, the external one switched off first', async () => {
     const { el, calls } = fakeElement();
-    const b = createTrackBridge(el);
+    const b = createTrackBridge(el, { fetchText: fetchSample });
     await b.showSubtitle({ id: 'os-1', provider: 'OpenSubtitles', src: 'https://h/1.vtt', label: 'English' });
     calls.length = 0;
     assert.equal(await b.showSubtitle({ id: 'mp-0', provider: 'MediaProbe', stream: '5' }), true);
@@ -131,7 +135,7 @@ test('the last selection asked for wins: an earlier one in flight does not land'
     let release;
     const slow = new Promise((r) => { release = r; });
     el.player.selectSubtitleLang = async (k) => { calls.push(['lang', k]); if (k === 'a') await slow; return true; };
-    const b = createTrackBridge(el);
+    const b = createTrackBridge(el, { fetchText: fetchSample });
     const first = b.showSubtitle({ id: 'a', provider: 'ExportTag', src: 'https://h/a.vtt', label: 'A' });
     await new Promise((r) => setTimeout(r, 5));
     const second = b.showSubtitle({ id: 'b', provider: 'ExportTag', src: 'https://h/b.vtt', label: 'B' });
@@ -170,15 +174,25 @@ test('a track the player could not load is reported', async () => {
     const { el } = fakeElement();
     el.player.selectSubtitleLang = async () => false;
     const failed = [];
-    const b = createTrackBridge(el, { onError: (id) => failed.push(id) });
+    const b = createTrackBridge(el, { fetchText: fetchSample, onError: (id) => failed.push(id) });
     assert.equal(await b.showSubtitle({ id: 'os-1', provider: 'OpenSubtitles', src: 'https://h/1.vtt', label: 'E' }), false);
     assert.deepEqual(failed, ['os-1']);
     assert.equal(b.activeId(), '');
 });
 
+test('a side-loaded fetch that fails is reported, not shown', async () => {
+    const failed = [];
+    const { el, calls } = fakeElement();
+    const b = createTrackBridge(el, { fetchText: async () => null, onError: (id) => failed.push(id) });
+    assert.equal(await b.showSubtitle({ id: 'us-1', provider: 'UserSubtitle', src: 'https://h/u.vtt', label: 'Mine' }), false);
+    assert.deepEqual(failed, ['us-1']);
+    assert.deepEqual(calls, [['lang', null]]);
+    assert.equal(b.activeId(), '');
+});
+
 test('dropMissing takes out the tracks whose chip is gone and says if one was showing', async () => {
     const { el, calls } = fakeElement();
-    const b = createTrackBridge(el, { fetchText: async () => 'WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nx\n' });
+    const b = createTrackBridge(el, { fetchText: fetchSample });
     await b.showSubtitle({ id: 'us-1', provider: 'UserSubtitle', src: 'https://h/u.vtt', label: 'Mine' });
     await b.showSubtitle({ id: 'tr-pt', provider: 'Translated', src: 'https://h/t.vtt', label: 'AI' });
     calls.length = 0;
@@ -191,10 +205,11 @@ test('dropMissing takes out the tracks whose chip is gone and says if one was sh
     calls.length = 0;
     assert.equal(b.dropMissing(['us-1', 'os-9']), false);
     assert.deepEqual(calls, []);
-    // Gone while NOT showing: dropped, but not reported as the one on screen.
+    // Gone while NOT showing: removed, but not reported as the one on screen.
     await b.showSubtitle({ id: 'none' });
     calls.length = 0;
     assert.equal(b.dropMissing([]), false);
+    assert.deepEqual(calls, [['remove', 'us-1']]);
 });
 
 test('pending is the caller\'s word, and kept until it says otherwise', async () => {
@@ -223,13 +238,13 @@ test('a translation never told is pending only while it is empty', async () => {
 
 test('an embedded track on screen is switched off before a side-loaded one is asked for', async () => {
     const { el, calls } = fakeElement();
-    const b = createTrackBridge(el);
+    const b = createTrackBridge(el, { fetchText: fetchSample });
     await b.showSubtitle({ id: 'mp-0', provider: 'MediaProbe', stream: '4' });
     calls.length = 0;
     await b.showSubtitle({ id: 'os-1', provider: 'OpenSubtitles', src: 'https://h/1.vtt', label: 'English' });
     assert.deepEqual(calls, [
         ['track', null],
-        ['add', { url: 'https://h/1.vtt', lang: 'os-1', label: 'English', format: 'vtt' }],
+        ['append', 'os-1', 'English', 1, false],
         ['lang', 'os-1'],
     ]);
     assert.equal(b.activeStream(), null);
@@ -251,7 +266,7 @@ test('...and before a translation, and nothing is left drawn when the new one fa
 
 test('no side-loaded pick switches an embedded track off when none is showing', async () => {
     const { el, calls } = fakeElement();
-    const b = createTrackBridge(el);
+    const b = createTrackBridge(el, { fetchText: fetchSample });
     await b.showSubtitle({ id: 'os-1', provider: 'OpenSubtitles', src: 'https://h/1.vtt', label: 'E' });
     assert.equal(calls.filter((c) => c[0] === 'track').length, 0);
 });
@@ -261,7 +276,7 @@ test('dropMissing discards a pick in flight for a chip that is gone', async () =
     let release;
     const slow = new Promise((r) => { release = r; });
     el.player.selectSubtitleLang = async (k) => { calls.push(['lang', k]); if (k === 'us-1') await slow; return true; };
-    const b = createTrackBridge(el);
+    const b = createTrackBridge(el, { fetchText: fetchSample });
     const pick = b.showSubtitle({ id: 'us-1', provider: 'UserSubtitle', src: 'https://h/u.vtt', label: 'Mine' });
     await new Promise((r) => setTimeout(r, 5));
     // The upload is deleted while its file is still being read.
@@ -276,7 +291,7 @@ test('dropMissing leaves a pick in flight for a chip that stays', async () => {
     let release;
     const slow = new Promise((r) => { release = r; });
     el.player.selectSubtitleLang = async (k) => { calls.push(['lang', k]); if (k === 'os-1') await slow; return true; };
-    const b = createTrackBridge(el);
+    const b = createTrackBridge(el, { fetchText: fetchSample });
     const pick = b.showSubtitle({ id: 'os-1', provider: 'OpenSubtitles', src: 'https://h/1.vtt', label: 'E' });
     await new Promise((r) => setTimeout(r, 5));
     b.dropMissing(['none', 'os-1']);
@@ -285,20 +300,20 @@ test('dropMissing leaves a pick in flight for a chip that stays', async () => {
     assert.equal(b.activeId(), 'os-1');
 });
 
-test('a side-loaded track that is gone and showing is switched off; one not showing is only forgotten', async () => {
+test('a side-loaded track that is gone is removed; showing or not', async () => {
     const { el, calls } = fakeElement();
-    const b = createTrackBridge(el);
+    const b = createTrackBridge(el, { fetchText: fetchSample });
     await b.showSubtitle({ id: 'us-1', provider: 'UserSubtitle', src: 'https://h/u.vtt', label: 'Mine' });
     await b.showSubtitle({ id: 'us-2', provider: 'UserSubtitle', src: 'https://h/v.vtt', label: 'Mine 2' });
     calls.length = 0;
     assert.equal(b.dropMissing(['us-2']), false, 'us-1 was not on screen');
-    assert.deepEqual(calls, []);
+    assert.deepEqual(calls, [['remove', 'us-1']]);
     assert.equal(b.dropMissing([]), true);
-    assert.deepEqual(calls, [['lang', null]]);
-    // Back under the same id: registered again, not taken for known.
+    assert.deepEqual(calls.slice(-1), [['remove', 'us-2']]);
+    // Back under the same id: cues go in again.
     calls.length = 0;
     await b.showSubtitle({ id: 'us-1', provider: 'UserSubtitle', src: 'https://h/u.vtt', label: 'Mine' });
-    assert.equal(calls.filter((c) => c[0] === 'add').length, 1);
+    assert.equal(calls.filter((c) => c[0] === 'append').length, 1);
 });
 
 test('dispose takes off the loadedmetadata listener still waiting', () => {

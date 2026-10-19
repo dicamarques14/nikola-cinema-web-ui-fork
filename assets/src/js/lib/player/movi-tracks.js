@@ -8,11 +8,11 @@
 //   embedded   selectSubtitleTrack(streamIndex) / selectAudioTrack(streamIndex)
 //              -- the file's stream index, which is what the server renders as
 //              data-stream on the chip.
-//   side-loaded addSubtitleTrack({url, lang, label, format}) then
-//              selectSubtitleLang(lang) -- fetched on selection, not on add.
-//              `lang` is the KEY (an entry with the same lang replaces the
-//              old one), so it is the chip's id here, never a language:
-//              webtor offers several tracks in one.
+//   side-loaded fetch + parseVttCues + appendSubtitleCues(key, label, cues)
+//              then selectSubtitleLang(key) -- same as generated once the
+//              text is in. `key` is the chip's id, never a language: webtor
+//              offers several tracks in one. (movi's own URL fetch has no
+//              credentials and a stricter parser.)
 //   generated  appendSubtitleCues(key, label, cues) -- the AI translation: the
 //              growing file is fetched here, parsed, and the cues put in
 //              as they come, so nothing blanks while a revision is read.
@@ -110,16 +110,6 @@ export function createTrackBridge(el, { fetchText = defaultFetchText, onError = 
         activeEmbedded = null;
     }
 
-    // register puts a side-loaded track in the player once, under the chip's
-    // id. addSubtitleTrack replaces an entry with the same key, so repeated
-    // calls are safe, and a changed URL (a rotated token) is picked up.
-    function register(p, sel) {
-        const known = registered.get(sel.id);
-        if (known && known.src === sel.src && known.label === sel.label) return;
-        p.addSubtitleTrack({ url: sel.src, lang: sel.id, label: sel.label || 'Subtitle', format: formatOf(sel.src) });
-        registered.set(sel.id, { generated: false, src: sel.src, label: sel.label, cues: [] });
-    }
-
     // reloadTranslation: the translation as it stands now, into the player's
     // generated track. The whole file is read each time (a revision is the
     // partial document so far) and appendSubtitleCues keeps what it has and
@@ -197,7 +187,25 @@ export function createTrackBridge(el, { fetchText = defaultFetchText, onError = 
             if (!r.ok) { await failed(p, sel.id); return false; }
             ok = await p.selectSubtitleLang(sel.id);
         } else {
-            register(p, sel);
+            // Side-loaded (OpenSubtitles, uploads, export tags): fetch and
+            // parse here, same path as Translated. movi-player's own fetch
+            // has no credentials and a stricter VTT parser; a failed load
+            // used to leave the chip marked with nothing on screen.
+            const text = await fetchText(sel.src);
+            if (mine !== seq) return false;
+            if (text === null) { await failed(p, sel.id); return false; }
+            const cues = parseVttCues(text);
+            if (!cues.length) { await failed(p, sel.id); return false; }
+            let rec = registered.get(sel.id);
+            if (!rec || !rec.generated) {
+                rec = { generated: true, src: sel.src, label: sel.label, cues: [], pending: false };
+                registered.set(sel.id, rec);
+            }
+            rec.label = sel.label || rec.label;
+            rec.src = sel.src;
+            rec.cues = cues;
+            rec.pending = false;
+            p.appendSubtitleCues(sel.id, rec.label || 'Subtitle', cues, false);
             ok = await p.selectSubtitleLang(sel.id);
         }
         if (mine !== seq) return false;
