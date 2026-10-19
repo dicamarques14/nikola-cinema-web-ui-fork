@@ -1086,6 +1086,39 @@ func (*Api) convertToVTT(u string) string {
 	return out
 }
 
+
+// thpPathPrefix is the deployment path in front of the torrent content on an
+// export URL (self-hosted rest-api sets EXPORT_PATH_PREFIX=/torrent-http-proxy/).
+// Empty on SaaS, where the infohash is the first path segment. Kept so /ext/
+// URLs hit the same nginx location as video (proxy_pass to torrent-http-proxy),
+// not web-ui's catch-all.
+func thpPathPrefix(exportPath string) string {
+	parts := strings.Split(strings.Trim(exportPath, "/"), "/")
+	for i, p := range parts {
+		if isInfohashPathSeg(p) {
+			if i == 0 {
+				return ""
+			}
+			return "/" + strings.Join(parts[:i], "/")
+		}
+	}
+	return ""
+}
+
+func isInfohashPathSeg(s string) bool {
+	n := len(s)
+	if n != 40 && n != 64 {
+		return false
+	}
+	for i := 0; i < n; i++ {
+		c := s[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') && (c < 'A' || c > 'F') {
+			return false
+		}
+	}
+	return true
+}
+
 func (s *Api) AttachExternalSubtitle(ei ra.ExportItem, u string) string {
 	res := s.AttachExternalFile(ei, u)
 	src, _ := url.Parse(u)
@@ -1118,7 +1151,10 @@ func (s *Api) AttachExternalFile(ei ra.ExportItem, u string) string {
 	// '%253D%253D'). Building the URL by string-concat bypasses that
 	// second pass while still giving us a fully-formed, quoted URL.
 	encodedPayload := url.QueryEscape(base64.StdEncoding.EncodeToString([]byte(u)))
-	out := src.Scheme + "://" + src.Host + "/ext/" + encodedPayload + "/" + url.PathEscape(name)
+	// Keep EXPORT_PATH_PREFIX (self-hosted: /torrent-http-proxy) so /ext/
+	// is served by torrent-http-proxy via nginx, not web-ui's location /.
+	prefix := thpPathPrefix(src.Path)
+	out := src.Scheme + "://" + src.Host + prefix + "/ext/" + encodedPayload + "/" + url.PathEscape(name)
 	if src.RawQuery != "" {
 		out += "?" + src.RawQuery
 	}

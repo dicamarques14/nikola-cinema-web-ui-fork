@@ -78,3 +78,38 @@ func TestAttachExternalSubtitleEncodesFilenameOnce(t *testing.T) {
 		t.Fatalf("export-item query lost: %s", res)
 	}
 }
+
+func TestAttachExternalSubtitleKeepsExportPathPrefix(t *testing.T) {
+	const hash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	ei := ra.ExportItem{URL: "https://webtor.example/torrent-http-proxy/" + hash + "/Dir/movie.mkv?token=abc&api-key=K"}
+	u := "https://webtor.example/user-subtitle/file/deadbeef/Universal%20Basic%20Guys.srt"
+	res := (&Api{}).AttachExternalSubtitle(ei, u)
+	if !strings.Contains(res, "https://webtor.example/torrent-http-proxy/ext/") {
+		t.Fatalf("expected /torrent-http-proxy/ext/ prefix, got: %s", res)
+	}
+	if strings.Contains(res, "%2520") {
+		t.Fatalf("filename was double-encoded: %s", res)
+	}
+	if !strings.Contains(res, "Universal%20Basic%20Guys.srt~vtt/Universal%20Basic%20Guys.vtt") {
+		t.Fatalf("expected single-encoded .srt~vtt/.vtt suffix, got: %s", res)
+	}
+	if !strings.Contains(res, "token=abc") || !strings.Contains(res, "api-key=K") {
+		t.Fatalf("export-item query lost: %s", res)
+	}
+}
+
+func TestAttachExternalSubtitleNoPrefixWhenInfohashIsFirst(t *testing.T) {
+	const hash = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	ei := ra.ExportItem{URL: "https://edge.example.com/" + hash + "/file.mp4?token=abc"}
+	res := (&Api{}).AttachExternalSubtitle(ei, "https://webtor.io/user-subtitle/file/deadbeef/subs.srt")
+	if strings.Contains(res, "/torrent-http-proxy/") {
+		t.Fatalf("SaaS-shaped URL should not invent a prefix: %s", res)
+	}
+	want := "https://edge.example.com/ext/"
+	if !strings.HasPrefix(strings.Split(res, "?")[0], "https://edge.example.com/ext/") && !strings.Contains(res, want) {
+		t.Fatalf("expected host-root /ext/, got: %s", res)
+	}
+	if !strings.Contains(res, "https://edge.example.com/ext/") {
+		t.Fatalf("expected https://edge.example.com/ext/, got: %s", res)
+	}
+}
