@@ -408,15 +408,14 @@ is the film's, and a wrongly-timed line is a smaller failure for a translation s
 correctly-timed advertisement. Equal ranks keep list order, which is the only stable tie-break
 the embedded bucket has.
 
-Embedded (`MediaProbe`) tracks are a source when the stream plays through the transcoder:
-`GetSubtitles` gives each visible embedded track `Src = <HLSSessionBase>/s<MPID>.m3u8` (the same
-variant hls.js plays; `SubtitleOpts.HLSSessionBase` is set in `streamContent` once the session
-exists), and `TranslateURL` appends `~tr:<lang>/s<MPID>.vtt` to it. The service then follows the
-live playlist (service README, «Live HLS source»): the translation arrives along with the
-transcode, `X-Subtitle-Live: 1` marks it as still growing, and a final artifact is cached only
-for a contiguous run from the start. A native MP4 played without a session has no base and no
-embedded source, as before — and a list with neither a file source nor a session offers no
-translation at all.
+Embedded (`MediaProbe`) tracks are **not** a translation source any more (2026-10-15). The player
+is movi-player, which demuxes embedded tracks from the file in the browser (`docs/player.md`);
+there is no transcoder session and so no HLS subtitle playlist for the service to follow. An
+embedded chip carries no `Src`, so the ladder (`pickTranslationSource`) passes over it, and a
+list with no file source (OpenSubtitles, upload, sidecar) offers no translation at all. Bitmap
+tracks (PGS, DVB, DVD) are offered for viewing since movi-player draws them, and were never a
+source (they would need OCR). The live-source machinery below (`X-Subtitle-Live`, run offsets,
+`sof=`) is kept in the service protocol but no client path starts such a run now.
 
 **Glossary.** `streamprefs.CastNames(ctx, imdbID, 30)` reads up to 30 cast names from TMDB credits
 stored by enrichment, passed as `names=` to the service.
@@ -427,76 +426,34 @@ is shared by every viewer of that track/language, so **the first requester's glo
 into the cached translation for everyone else too** (service README, "What survives the round
 trip" / cache-key section).
 
-## Client behaviour (`Player.jsx`, `subtitle-rules.js`, `subtitle-progress.js`, `cue-offset.js`, `subtitle-apply.js`)
+## Client behaviour (`Player.jsx`, `hooks/useSubtitleTranslation.js`, `movi-tracks.js`, `subtitle-rules.js`, `subtitle-progress.js`)
 
-- **One selection, one writer (`subtitle-apply.js`).** Two renderers can draw subtitles on the same
-  element: hls.js, from the transcoder's HLS manifest (embedded tracks, no `<track>` element,
-  `data-mp-id`), and the media element's own `<track>`s (everything side-loaded — uploads,
-  OpenSubtitles, sidecars, the AI translation). The chip carrying `data-default="true"` is the only
-  thing that says which, and `applySubtitleSelection(video, hls, selection)` is the only thing that
-  writes that answer into both. (One exception, and it is bounded: `restoreTrackState`
-  (`cue-offset.js`) writes element modes too, from the snapshot a seek took — which is why the seek
-  applies the chip again right after it, see below.) A side-loaded or `none` selection means
-  `hls.subtitleTrack = -1`, `hls.subtitleDisplay = false`, the chosen `<track>` `'showing'` and
-  **every other text track — element-backed and hls.js-managed alike — `'disabled'`**.
-  `activateSubtitle`, `initDefaultTracks` (`hls-manager.js`) and the session seek all go through it.
-- **Why `'disabled'` and not `'hidden'` for hls.js's tracks.** hls.js is not a passive renderer. Its
-  `SubtitleTrackController` listens to the media element's `textTracks` `change` event
-  (`onTextTracksChanged`), scans every labeled subtitle track and adopts one — the *last* in
-  `'hidden'` mode, or the *first* in `'showing'` — then maps it back to a manifest index and calls
-  `setSubtitleTrack`. A manifest track left `'hidden'` is therefore not "off": it is a standing
-  invitation, and our own mode writes are the `change` events that cash it in. Measured on stage
-  2026-09-16: after switching from an embedded Russian track to the AI one, `hls.subtitleTrack` read
-  `-1` and `hls.subtitleDisplay` `false` while the embedded "Full (rus)" TextTrack sat at
-  `'showing'` with 25 cues under the Catalan ones. (Element tracks go to `'disabled'` for a second,
-  older reason: a `'hidden'` `<track>` is still fetched, and 40+ OpenSubtitles tracks per page meant
-  a burst of downloads on every selection.)
-- **Re-asserted, not written once.** The traffic goes both ways: hls.js's `toggleTrackModes` (it
-  runs on every `setSubtitleTrack`, `-1` included, and on a `subtitleDisplay` change while a track is
-  selected) sets every labeled subtitle track that is not its own current one to `'disabled'` — our
-  `<track>`s included. So the player subscribes to `SUBTITLE_TRACK_SWITCH` and
-  `SUBTITLE_TRACKS_UPDATED` and re-applies the selection whenever what hls.js is doing disagrees
-  with the chip (`selectionHolds`). Only side-loaded and `none` selections are guarded — an embedded
-  one is self-healing: it leaves hls.js's own track `'showing'`, so `onTextTracksChanged` re-adopts
-  the same index and nothing changes. The only transition that loses it is `loadSource`, which the
-  seeker re-applies. Listeners come off on unmount.
-- **Why `applySubtitleSelection` refuses to be re-entered.** `hls.subtitleTrack = -1` is not a value
-  assignment: `setSubtitleTrack` has no "already -1" exit, so every write runs `toggleTrackModes`
-  (disabling the very `<track>` the same call is about to show) and then triggers
-  `SUBTITLE_TRACK_SWITCH` **synchronously** — `Hls.trigger` is eventemitter3 wrapped in a
-  `try/catch` that turns a thrown error into a non-fatal `ERROR` event. The re-assert listener
-  therefore runs *nested inside* the apply, at the one moment the selection is guaranteed not to
-  hold, and applies again. Without a guard that is unbounded recursion: against a line-faithful
-  model of hls.js 1.6.14, 812 frames and a `RangeError` per selection, swallowed by hls.js as ~40
-  `INTERNAL_EXCEPTION` errors and a screenful of `HLS non-fatal error` warnings. A module-level
-  `applying` flag in `subtitle-apply.js` refuses the nested call; the outer apply then finishes
-  writing the element modes, and hls.js's *asynchronous* `onTextTracksChanged` sees the finished
-  state. The flag lives in the writer, not in the listener, because the seeker re-enters through
-  that same listener rather than through its own code. The disagreement check (`selectionHolds`)
-  is what stops the *asynchronous* round trip: an apply writes modes, the modes wake hls.js, hls.js
-  calls back, and the second pass finds nothing to fix.
-- **The mount race.** `activateSubtitle` can run before `window.hlsPlayer` exists — the mount-time
-  restore of a saved translation does exactly that — so only the element modes land there.
-  `initDefaultTracks`, on the first `canplay`, applies the same selection again with the instance in
-  hand. It used to read `data-mp-id` and do nothing when there was none, which left a side-loaded
-  default running with hls.js's own default of `subtitleDisplay = true` and no track selected: one
-  `change` event away from the overlap above.
-- **The session seek re-reads the chip.** The subtitles dialog stays open and clickable while a seek
-  is in flight, so `session-seek.js` no longer restores the hls.js selection from the snapshot it
-  took at seek start (that snapshot could name the track the viewer has just switched away from, and
-  put hls.js back on it). On `SUBTITLE_TRACKS_UPDATED` after `loadSource` it applies whatever the
-  picker says now, and does so once more after `restoreTrackState` on `playing` — the element
-  snapshot is there for the *cues* hls.js drops, and its modes are as stale as the hls.js selection
-  was. Known cost on native HLS (iOS): a subtitle picked in the fullscreen menu rather than in the
-  picker is switched off at the next session seek, because the chip is the only truth the re-apply
-  reads — accepted, not a bug to refile. A seek also kicks the running translation poll
-  (`onSeekOffsetChange` → `pollStopRef.current.kick()`): an immediate HEAD instead of waiting out
-  the 3 s interval, and a one-time bypass of `TRACK_RELOAD_INTERVAL_MS` on the reload the next
-  changed count brings, so the new position's cues do not queue up behind both delays on top of
-  the service's own translation lag. The mark is spent only on a *count* change: after a seek the
-  frontier (`X-Subtitle-Pending-From`) moves before any new cue lands, and that is a change
-  `onProgress` reports but not one that changes the track revision, so spending the mark on it
-  would hand the seek's first real cues back to the throttle.
+- **One selection, one writer (`movi-tracks.js`).** movi-player draws every subtitle itself --
+  embedded tracks it demuxes, side-loaded ones it fetches, generated ones it is handed -- and the
+  chip carrying `data-default="true"` is the only thing that says which. The track bridge
+  (`createTrackBridge`, on the element as `el.__wtTracks`) is the only thing that writes that
+  answer into the engine: `activateSubtitle`, the mount-time defaults (at `loadedmetadata`), the
+  dialog swap and a delete all go through `bridge.showSubtitle(selection)`. Embedded chips are
+  selected by their stream index (`data-stream`), side-loaded ones are registered under their
+  chip id and selected by it, the AI translation goes in as generated cues (below). Every pick
+  waits for the metadata; the last one asked for wins; an embedded track is switched off before a
+  side-loaded or generated one is asked for, so two never draw at once; a pick that fails to load
+  leaves nothing drawn and reports `subtitle-load-error`. movi-player's own captions menu is off
+  (`controlslist` `nocc noaudio`) whenever the picker is on the page. The details and the API
+  table are in `docs/player.md`, "Subtitles and audio on screen", and the design in
+  `docs/superpowers/specs/2026-10-15-movi-subtitle-bridge.md`.
+- **Nothing to fight over.** The hls.js-era rules -- `'disabled'` rather than `'hidden'` modes,
+  re-asserting the selection on `SUBTITLE_TRACK_SWITCH`, the re-entrancy guard in
+  `subtitle-apply.js`, the mount race with `window.hlsPlayer`, the session seek re-reading the
+  chip -- are gone with hls.js and the transcoder (`subtitle-apply.js`, `cue-offset.js`,
+  `subtitle-track-reload.js` were removed). `textTracks` is not read: movi-player mirrors one
+  synthetic cue there, so "what is playing" is `bridge.activeId()` / `activeStream()`.
+- **A seek kicks the running translation poll** (`pollStopRef.current.kick()`): an immediate HEAD
+  instead of waiting out the 3 s interval, and a one-time bypass of `TRACK_RELOAD_INTERVAL_MS` on
+  the reload the next changed count brings, so the new position's cues do not queue up behind
+  both delays on top of the service's own translation lag. The mark is spent only on a *count*
+  change: after a seek the frontier (`X-Subtitle-Pending-From`) moves before any new cue lands,
+  and that is a change `onProgress` reports but not one that changes the track revision.
 - **Audio switch re-pick.** `onAudioSelect` calls `pickDefaultSubtitle(readTracks(modal), audioLang,
   preferredLang)` and activates the result, unless the viewer already made a manual subtitle choice
   this session (`manualSubtitleRef`) — re-picking over an explicit choice would read as the player
@@ -714,24 +671,24 @@ trip" / cache-key section).
   - **No tier gate, and none wanted.** A viewer without the entitlement never has a translation
     running: the AI chip is rendered `Locked` with no `Src` upstream, so there is nothing here to
     gate. The gate is the dependency (a running translation), not a flag.
-- **`rev` reload (throttled).** A reload rewrites the `<track>` `src` via `withRev`
-  (adds/replaces `?rev=<done>`, every other query param — including the signed token — passes
-  through untouched), forcing a refetch. The browser drops the cue list while it reparses, so the
-  track is briefly empty on every swap: reloads are therefore throttled to at most one per
-  `TRACK_RELOAD_INTERVAL_MS` (15 s, `Player.jsx`) and always happen on the final progress, while
-  the `.tr-progress` percentage still updates on every 3 s poll. No reload happens while
-  `total === 0` (nothing to fetch yet). `reloadSubtitleTrack` (`subtitle-track-reload.js` — its own
-  module so the listener lifetime is testable; `node --test` cannot parse `Player.jsx`) returns
-  whether it actually swapped the `src`, and **only a real swap stamps the throttle** — a no-op
-  must not hold off the next real reload for another 15 s.
-  `captureTrackState`/`restoreTrackState` (`cue-offset.js`) snapshot and restore cues/mode around
-  the swap, and the same snapshot is restored if the new revision fails to load (`error` on the
-  `<track>` → `subtitle-translate-error {code:'track'}`, once per run); session cue-offset
-  (mid-movie resume) reapplies via the existing `load` listener. There is **one `load`/`error`
-  listener pair per `<track>` at a time**: the pending pair is removed before the next revision's
-  goes on, so a failure restores the *latest* snapshot rather than one from several revisions ago.
-  `onTrackError` additionally checks the run identity (`runSeqRef`): a `<track>` whose `src` a
-  stopped run set can still fail afterwards, and that event must not kill the current run.
+- **`rev` reload (throttled).** A reload reads the growing translation at `withRev(src, done)`
+  (adds/replaces `?rev=<done>`, every other query param -- including the signed token -- passes
+  through untouched) and hands it to the engine: `bridge.reloadTranslation(id, url, { pending })`
+  fetches the whole partial VTT, parses it (`parseVttCues`) and calls movi-player's
+  `appendSubtitleCues(id, label, cues, pending)`, which keeps what it has and adds the rest
+  (duplicates -- same text, starting within 0.1 s -- are dropped). Nothing blanks while a revision
+  is read, so the throttle exists only for the request: at most one read per
+  `TRACK_RELOAD_INTERVAL_MS` (5 s, `hooks/useSubtitleTranslation.js`), always one on the final
+  progress, none while `total === 0` or `done === 0` (nothing to read yet); the `.tr-progress`
+  percentage still updates on every 3 s poll. Reads never overlap: one asked for while another is
+  out is dropped -- except the final one, which is queued and runs when the read in flight comes
+  back, so the track is never left pending. `pending` is `true` for every read of a running run
+  and `false` for the final one (`onDone`): it is what movi-player reports in `getSubtitleLangs()`
+  for the track. A read that fails (`ok: false`) is `subtitle-translate-error {code:'track'}`, once
+  per run; `onTrackError` also checks the run identity (`runSeqRef`): a read a stopped run started
+  can still fail afterwards, and that must not kill the current run. "Where the cues in the track
+  end" (the catch-up's coverage edge, the credits guess) is the last cue the bridge holds
+  (`r.lastEnd`, `bridge.cuesOf(id)`), not the element's `TextTrack`.
 - **Waiting for a slot.** `0/0` means "the job has not counted the cues yet", which covers both a
   run that has just started and one queued behind every other translation on the service. After
   `QUEUE_HINT_MS` (30 s) of nothing but `0/0`, `pollProgress` reports once more with
@@ -795,6 +752,12 @@ film can be translated. Owner's request of 2026-09-18.
   offer again** stores `{never: true}`, both under `localStorage['wt-subtitle-offer']` — per
   browser, across all films. Storage that throws reads as "not suppressed".
 - **Not covered by tests:** the 10 s linger timer against real controls auto-hide, and fullscreen.
+
+> The subsections from here to "The pill on a phone" were written against the HLS player. Their
+> rules for the run, the hold and the banner still hold; where they speak of `<track>` swaps,
+> blanking, the 15 s throttle, session seeks, run offsets or `cue-offset.js`, read the bridge's
+> generated track (no blanking, 5 s throttle, one direct timeline, offset 0) -- see "`rev` reload"
+> above.
 
 ### Starting a run over a playing film holds it
 
@@ -1436,11 +1399,12 @@ row plus the tracks of the expanded language.
   chip opened it. Both controls go through `setUploadPanel`, so the state left behind is the same
   one either way.
 - **Deleting the upload that is playing lands on Off.** The swap replaces `#my-subtitles`, so the
-  chip goes, but the `<track>` lives in `<video>` and would keep the deleted file's subtitles on
-  screen with nothing marked. `dropDeletedTracks` (`subtitle-track-reload.js`)
-  removes every `<track>` no chip claims any more — the test is the id against **all** chips in
-  the dialog, since the preloaded OpenSubtitles and sidecar tracks are `<track>` elements too —
-  and reports whether one of them was showing; when it was, the player activates `none` with
+  chip goes, but the track lives in the engine and would keep the deleted file's subtitles on
+  screen with nothing marked. `bridge.dropMissing(chipIDs)` (`movi-tracks.js`) drops every track
+  the bridge registered that no chip claims any more -- the test is the id against **all** chips
+  in the dialog -- (a generated track leaves the engine, a showing side-loaded one is switched
+  off), discards a pick still in flight for a gone chip, and reports whether one of them was
+  showing; when it was, the player activates `none` with
   `persist: false`. The viewer chose a deletion, not a track, so nothing is PUT.
 - **Every player dialog closes on a click outside its box** (owner, 2026-09-15). `#subtitles` and
   `#embed` each end with DaisyUI's backdrop — `<form method="dialog" class="modal-backdrop">` with
@@ -1579,6 +1543,13 @@ Server side: `handlers/action/picker.go` (`SubtitleLangGroups`, `OriginCode`, `O
   film. Watch it before reading the funnel as a regression.
 
 ## Testing
+
+> **2026-10-19:** `Player.wiring.test.js` still describes the hls.js harness below and does not
+> load (it imports the removed `hls-manager.js`); its rewrite around a stand-in `<movi-player>` is
+> pending. `subtitle-apply.test.js`, `subtitle-track-reload.test.js` and `cue-offset.test.js` were
+> removed with their modules. The bridge has its own suite, `movi-tracks.test.js` (keys, formats,
+> sequencing, embedded-off-before-external, pending, `dropMissing`, listener lifetime).
+
 
 - Go: `make test` (not bare `go test ./...` — the proto registration conflict between the
   abuse-store and torrent-store protobufs panics test binaries without

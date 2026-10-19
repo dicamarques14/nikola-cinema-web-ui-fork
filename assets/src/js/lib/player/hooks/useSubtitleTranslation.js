@@ -522,16 +522,31 @@ export function useSubtitleTranslation({ videoRef, videoEl, trackContainer, trac
         let lastCueEnd = null;
         const coverageEnd = () => lastCueEnd;
         let reading = false;
-        const reload = (done, force, frontier = null) => {
+        // The last read of a finished run, asked for while another read was
+        // out: done after it, or the track would stay pending for good.
+        let finalAfter = null;
+        // `final`: the run is over (onDone), so the track stops being
+        // pending in the player; every read before it is of a run still
+        // writing (movi-tracks.js reloadTranslation).
+        const reload = (done, force, frontier = null, final = false) => {
             const bridge = videoEl.__wtTracks;
-            if (!bridge || reading) return;
+            if (!bridge) return;
+            if (reading) {
+                if (final) finalAfter = done;
+                return;
+            }
             const now = Date.now();
             if (!force && now - lastReloadAt < TRACK_RELOAD_INTERVAL_MS) return;
             lastReloadAt = now;
             reading = true;
-            bridge.reloadTranslation(id, withRev(src, done)).then((r) => {
+            bridge.reloadTranslation(id, withRev(src, done), { pending: !final }).then((r) => {
                 reading = false;
                 if (runID !== runSeqRef.current) return;
+                if (finalAfter !== null) {
+                    const last = finalAfter;
+                    finalAfter = null;
+                    reload(last, true, null, true);
+                }
                 if (!r.ok) {
                     onTrackError();
                     return;
@@ -830,7 +845,7 @@ export function useSubtitleTranslation({ videoRef, videoEl, trackContainer, trac
                 // report this translation again.
                 translationStatusRef.current.set(id, 'done');
                 cues = p.total || cues;
-                reload(p.done, true, null);
+                reload(p.done, true, null, true);
                 if (span) span.hidden = true;
                 if (spinner) spinner.hidden = true;
                 if (window.umami) window.umami.track('subtitle-translate-done', {

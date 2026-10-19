@@ -66,13 +66,21 @@ export function createTrackBridge(el, { fetchText = defaultFetchText, onError = 
     // new `ready`, see `rearm`.
     let ready = null;
     let disposed = false;
+    // The loadedmetadata listener still waiting, if any: dispose takes it off.
+    let waiting = null;
+    const unwait = () => {
+        if (waiting) el.removeEventListener('loadedmetadata', waiting);
+        waiting = null;
+    };
     const arm = () => {
+        unwait();
         ready = new Promise((resolve) => {
             if (el.player && el.readyState >= 1) {
                 resolve();
                 return;
             }
-            const done = () => { el.removeEventListener('loadedmetadata', done); resolve(); };
+            const done = () => { unwait(); resolve(); };
+            waiting = done;
             el.addEventListener('loadedmetadata', done);
         });
     };
@@ -84,6 +92,8 @@ export function createTrackBridge(el, { fetchText = defaultFetchText, onError = 
     // later one is dropped (persistTrackChoice's sequence, same reason).
     let seq = 0;
     const next = () => ++seq;
+    // The chip the latest showSubtitle is for, while it is in flight.
+    let wanted = '';
 
     // What this bridge put in the player, keyed by chip id: the key of an
     // external track and of a generated one.
@@ -115,25 +125,43 @@ export function createTrackBridge(el, { fetchText = defaultFetchText, onError = 
     // partial document so far) and appendSubtitleCues keeps what it has and
     // adds the rest: duplicates are dropped by text and start, so a re-read
     // costs nothing on screen. Returns the cue count and where they end.
-    async function reloadTranslation(id, src, label = '') {
+    //
+    // `pending` is the caller's word on whether the run is still writing
+    // (useSubtitleTranslation: true until onDone). Left out, the track keeps
+    // what it was last told -- a pick of a chip whose run is unknown here --
+    // and a track never told is pending only while it has no cue at all.
+    async function reloadTranslation(id, src, { label = '', pending } = {}) {
         const text = await fetchText(src);
         const p = player();
         if (!p || text === null) return { cues: 0, lastEnd: null, ok: false };
         const cues = parseVttCues(text);
         let rec = registered.get(id);
         if (!rec || !rec.generated) {
-            rec = { generated: true, src, label, cues: [] };
+            rec = { generated: true, src, label, cues: [], pending: undefined };
             registered.set(id, rec);
         }
         rec.label = label || rec.label;
         rec.cues = cues;
-        p.appendSubtitleCues(id, rec.label || 'Subtitle', cues, cues.length === 0);
+        if (typeof pending === 'boolean') rec.pending = pending;
+        const isPending = typeof rec.pending === 'boolean' ? rec.pending : cues.length === 0;
+        p.appendSubtitleCues(id, rec.label || 'Subtitle', cues, isPending);
         return { cues: cues.length, lastEnd: cues.length ? cues[cues.length - 1].end : null, ok: true };
+    }
+
+    // failed: a side-loaded or generated pick that did not load. movi-player
+    // has already stopped the external track it was drawing (its
+    // selectSubtitleLang stops first, fetches second), so what is on screen
+    // is nothing; the bridge says so, and the caller hears about it.
+    async function failed(p, id) {
+        try { await p.selectSubtitleLang(null); } catch (e) { /* nothing showing */ }
+        activeKey = '';
+        onError(id);
     }
 
     // sel: { id, provider, src, label, stream } -- null, or id 'none': off.
     async function showSubtitle(sel) {
         const mine = next();
+        wanted = (sel && sel.provider !== 'MediaProbe' && sel.id) || '';
         await ready;
         const p = player();
         if (!p || mine !== seq) return false;
@@ -153,18 +181,27 @@ export function createTrackBridge(el, { fetchText = defaultFetchText, onError = 
             return true;
         }
         if (!sel.src) return false;
+        // An embedded track on screen goes first: selectSubtitleLang drops it
+        // only once its own fetch has worked, so a failed or slow one would
+        // leave it drawn -- and, between the two, both would be. Nothing is
+        // drawn from here until the new track is in.
+        if (activeEmbedded !== null) {
+            try { await p.selectSubtitleTrack(null); } catch (e) { /* already off */ }
+            activeEmbedded = null;
+            if (mine !== seq) return false;
+        }
         let ok;
         if (sel.provider === 'Translated') {
-            const r = await reloadTranslation(sel.id, sel.src, sel.label);
+            const r = await reloadTranslation(sel.id, sel.src, { label: sel.label });
             if (mine !== seq) return false;
-            if (!r.ok) { onError(sel.id); return false; }
+            if (!r.ok) { await failed(p, sel.id); return false; }
             ok = await p.selectSubtitleLang(sel.id);
         } else {
             register(p, sel);
             ok = await p.selectSubtitleLang(sel.id);
         }
         if (mine !== seq) return false;
-        if (ok === false) { onError(sel.id); return false; }
+        if (ok === false) { await failed(p, sel.id); return false; }
         activeKey = sel.id;
         activeEmbedded = null;
         return true;
@@ -183,8 +220,22 @@ export function createTrackBridge(el, { fetchText = defaultFetchText, onError = 
     // dropMissing takes out the side-loaded and generated tracks whose chip is
     // gone (a deleted upload, the AI item of the old language). Reports
     // whether the one showing was among them.
+    //
+    // It also ends a selection still in flight for a chip that is gone:
+    // landing after this it would put the deleted track back. One for a chip
+    // that stays is left to land.
+    //
+    // A generated track leaves movi-player entirely (removeSubtitleCues). A
+    // side-loaded one cannot -- movi-player 0.4.1 has no call that takes an
+    // external entry out -- so it is switched off if it was showing and
+    // forgotten here; its menu is hidden (controlslist nocc), and a chip that
+    // comes back under the same id replaces the entry (addSubtitleTrack).
     function dropMissing(keepIds) {
         const keep = new Set(keepIds);
+        if (wanted && wanted !== 'none' && !keep.has(wanted)) {
+            seq++;
+            wanted = '';
+        }
         let wasShowing = false;
         for (const id of Array.from(registered.keys())) {
             if (keep.has(id)) continue;
@@ -219,6 +270,7 @@ export function createTrackBridge(el, { fetchText = defaultFetchText, onError = 
         dispose() {
             disposed = true;
             seq++;
+            unwait();
             el.removeEventListener('emptied', rearm);
             registered.clear();
         },

@@ -161,11 +161,11 @@ export function withParam(src, name, value) {
 // for a live source it is also what keeps the transcoder session and its
 // FFmpeg run alive, and nobody should pay for a film nobody is watching.
 //
-// stop() carries kick() too: a session seek jumps the video to a new
-// position, and without it the first cues for that position wait out
-// whatever is left of the 3 s poll interval on top of the service's own
-// translation lag, and then the caller's own reload throttle
-// (`TRACK_RELOAD_INTERVAL_MS` in Player.jsx) on top of that. kick() runs a
+// stop() carries kick() too: a seek jumps the video to a new position, and
+// without it the first cues for that position wait out whatever is left of
+// the 3 s poll interval on top of the service's own translation lag, and
+// then the caller's own reload throttle (`TRACK_RELOAD_INTERVAL_MS` in
+// hooks/useSubtitleTranslation.js) on top of that. kick() runs a
 // tick right away instead of waiting for the interval, and marks the next
 // changed report with `forceReload: true` so the caller's reload can
 // bypass its throttle for that one swap — "next", not "this one", because
