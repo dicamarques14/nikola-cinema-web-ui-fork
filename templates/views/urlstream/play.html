@@ -1,0 +1,41 @@
+{{ define "title" }}{{ .Data.Title }}{{ end }}
+{{ define "main" }}
+{{ with .Data }}
+{{/* A Stremio addon stream that is a plain HTTP(S) file (docs/url_streams.md):
+     played through /url/:id/stream while the import turns it into a torrent;
+     no picker, no Vault, no share -- movi-player's own menus stand in. */}}
+<section class="min-h-screen pt-20 sm:pt-24 pb-10 px-3 sm:px-6" id="url-player"
+         data-status-url="{{ .StatusURL }}"
+         data-import="{{ .ImportEnabled }}"
+         data-l-queued="{{ t $.Lang "urlstream.queued" }}"
+         data-l-downloading="{{ t $.Lang "urlstream.downloading" }}"
+         data-l-hashing="{{ t $.Lang "urlstream.hashing" }}"
+         data-l-storing="{{ t $.Lang "urlstream.storing" }}"
+         data-l-ready="{{ t $.Lang "urlstream.ready" }}"
+         data-l-failed="{{ t $.Lang "urlstream.failed" }}"
+         data-l-proxy-only="{{ t $.Lang "urlstream.proxyOnly" }}">
+  <div class="max-w-[1100px] mx-auto">
+    <h1 class="text-lg sm:text-xl font-bold mb-3 truncate" title="{{ .Filename }}">{{ .Title }}</h1>
+    <div class="relative">
+      <video class="player"
+             crossorigin="anonymous"
+             preload="auto"
+             data-url-source-id="{{ .ID }}"
+             data-settings='{"features":{"share":false,"embed":false}}'
+             controls
+             autoplay
+             playsinline>
+        <source src="{{ .StreamURL }}">
+      </video>
+    </div>
+    <div id="url-import-status" class="mt-3 flex flex-wrap items-center gap-3 text-sm text-w-sub" hidden>
+      <span class="url-import-text"></span>
+      <button type="button" class="url-import-go btn btn-sm btn-primary" hidden>{{ t $.Lang "urlstream.switchNow" }}</button>
+      <button type="button" class="url-import-stay btn btn-sm btn-ghost" hidden>{{ t $.Lang "urlstream.stay" }}</button>
+    </div>
+  </div>
+  {{ "player.css" | asset }}
+  {{ "urlstream.js" | asset }}
+</section>
+{{ end }}
+{{ end }}

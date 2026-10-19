@@ -696,7 +696,44 @@ export function DiscoverApp({ addonUrls, addonSeeds, hasCustomAddons }) {
         url.push({ season, episode: null });
     }, []);
 
-    const handleStreamClick = useCallback(async (infoHash, fileIdx) => {
+    // A direct-URL row (stream.js streamKind 'url'): the server fetches the
+    // stream from the addon itself and answers with the player page; the
+    // link the browser holds is only the key to find it (url_streams.md).
+    const openUrlStream = useCallback(async (stream) => {
+        const m = state.modal;
+        const hints = stream.behaviorHints || {};
+        try {
+            const res = await fetch(langPath('/url/open'), {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json',
+                    'X-CSRF-TOKEN': window._CSRF,
+                },
+                body: JSON.stringify({
+                    addon_id: stream.addonId,
+                    type: stream.streamType,
+                    id: stream.streamId,
+                    url: stream.url,
+                    filename: hints.filename || '',
+                    size: Number(hints.videoSize) || 0,
+                    title: m?.title || '',
+                }),
+            });
+            const data = res.ok ? await res.json() : null;
+            if (!data || !data.play_url) throw new Error('open failed');
+            window.umami?.track('discover-url-stream-open', { type: stream.streamType });
+            window.location.assign(data.play_url);
+        } catch (e) {
+            if (window.toast) window.toast.error(t('discover.urlOpenError'));
+        }
+    }, [state.modal]);
+
+    const handleStreamClick = useCallback(async (infoHash, fileIdx, urlStream) => {
+        if (!infoHash && urlStream) {
+            await openUrlStream(urlStream);
+            return;
+        }
         const currentTitle = state.modal?.title;
         const currentPoster = state.modal?.poster;
         const currentBackToEpisodes = state.modal?.backToEpisodes;
@@ -736,7 +773,7 @@ export function DiscoverApp({ addonUrls, addonSeeds, hasCustomAddons }) {
                 backToEpisodes: currentBackToEpisodes,
             }});
         }
-    }, [state.modal]);
+    }, [state.modal, openUrlStream]);
 
     const closeModal = useCallback(() => {
         streamGenRef.current++;

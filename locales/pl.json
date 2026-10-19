@@ -2189,5 +2189,17 @@
     "embed.off.link": "serwera Webtor",
     "embed.unauthorized.title": "Ten odtwarzacz nie jest dozwolony na tej stronie",
     "embed.unauthorized.text": "To Twoja strona? Dodaj jej domenę w {{.Link}}.",
-    "embed.unauthorized.link": "swoim profilu na serwerze Webtor"
+    "embed.unauthorized.link": "swoim profilu na serwerze Webtor",
+    "discover.directLink": "Bezpośredni link",
+    "discover.notSupportedYet": "Jeszcze nieobsługiwane",
+    "discover.urlOpenError": "Nie udało się otworzyć tego streamu. Dodatek mógł go zmienić — spróbuj ponownie.",
+    "urlstream.queued": "Oczekiwanie na import do Webtor…",
+    "urlstream.downloading": "Import do Webtor… {n}%",
+    "urlstream.hashing": "Przygotowywanie pełnego odtwarzacza… {n}%",
+    "urlstream.storing": "Prawie gotowe…",
+    "urlstream.ready": "Gotowe w pełnym odtwarzaczu z napisami, biblioteką i Vault. Przełączenie za {n} s.",
+    "urlstream.switchNow": "Przełącz teraz",
+    "urlstream.stay": "Zostań tutaj",
+    "urlstream.failed": "Import nie powiódł się. Odtwarzanie trwa ze źródła.",
+    "urlstream.proxyOnly": "Odtwarzanie bezpośrednio ze źródła dodatku."
 }

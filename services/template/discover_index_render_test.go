@@ -33,6 +33,7 @@ func TestDiscoverIndexCarriesThePassthroughAnswer(t *testing.T) {
 		Prefs       struct{}
 		AIEnabled   bool
 		Passthrough view
+		URLStreams  bool
 	}{Passthrough: view{HEVC: "unknown"}}
 	var buf bytes.Buffer
 	if err := tpl.ExecuteTemplate(&buf, "main", map[string]interface{}{"Data": data, "Lang": "en"}); err != nil {

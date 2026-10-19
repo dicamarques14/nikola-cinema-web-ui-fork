@@ -2149,5 +2149,17 @@
     "embed.off.link": "Webtor-server",
     "embed.unauthorized.title": "Deze speler is niet toegestaan op deze website",
     "embed.unauthorized.text": "Is dit jouw website? Voeg het domein toe in {{.Link}}.",
-    "embed.unauthorized.link": "je profiel op de Webtor-server"
+    "embed.unauthorized.link": "je profiel op de Webtor-server",
+    "discover.directLink": "Directe link",
+    "discover.notSupportedYet": "Nog niet ondersteund",
+    "discover.urlOpenError": "Deze stream kon niet worden geopend. De add-on heeft hem misschien gewijzigd — probeer het opnieuw.",
+    "urlstream.queued": "Wachten op import in Webtor…",
+    "urlstream.downloading": "Importeren in Webtor… {n}%",
+    "urlstream.hashing": "Volledige speler voorbereiden… {n}%",
+    "urlstream.storing": "Bijna klaar…",
+    "urlstream.ready": "Klaar in de volledige speler met ondertitels, bibliotheek en Vault. Overschakelen over {n} s.",
+    "urlstream.switchNow": "Nu overschakelen",
+    "urlstream.stay": "Hier blijven",
+    "urlstream.failed": "Import mislukt. Afspelen gaat door vanaf de bron.",
+    "urlstream.proxyOnly": "Speelt rechtstreeks vanaf de bron van de add-on."
 }

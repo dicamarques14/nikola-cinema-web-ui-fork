@@ -1,7 +1,7 @@
 import { useRef, useEffect, useState, useMemo, useCallback } from 'preact/hooks';
 import { rebindAsync } from '../../async';
 import { initProgressLog } from '../../progressLog';
-import { parseStreamName, extractInfoHash, extractFileIdx } from '../stream';
+import { parseStreamName, extractInfoHash, extractFileIdx, streamKind } from '../stream';
 import { extractLanguages, supportsFlagEmoji } from '../lang';
 import { loadPrefs, savePrefs } from '../prefs';
 import { chipClass } from './discoverUtils';
@@ -959,6 +959,10 @@ const PLAY_ICON = (
 function StreamRow({ stream, info, video, onStreamClick }) {
     const infoHash = extractInfoHash(stream);
     const fileIdx = extractFileIdx(stream);
+    // A direct-URL file plays through the server when the instance allows
+    // it and the addon is one of the account's (Cinemeta has no row).
+    const kind = streamKind(stream);
+    const playableUrl = kind === 'url' && !!window._urlStreams && !!stream.addonId;
     const titleLines = (stream.title || '').split('\n').filter(Boolean);
 
     const content = (
@@ -1000,8 +1004,11 @@ function StreamRow({ stream, info, video, onStreamClick }) {
                     <div key={i} class="text-xs text-w-sub line-clamp-1">{line}</div>
                 ))}
             </div>
-            {!infoHash && (
-                <span class="text-xs text-w-muted flex-shrink-0">{t('discover.noTorrent')}</span>
+            {playableUrl && (
+                <span class="border border-w-line text-w-muted text-[10px] px-1.5 py-0.5 rounded font-medium flex-shrink-0">{t('discover.directLink')}</span>
+            )}
+            {!infoHash && !playableUrl && (
+                <span class="text-xs text-w-muted flex-shrink-0">{t(kind === 'adaptive' ? 'discover.notSupportedYet' : 'discover.noTorrent')}</span>
             )}
         </>
     );
@@ -1016,6 +1023,18 @@ function StreamRow({ stream, info, video, onStreamClick }) {
                     onStreamClick(infoHash, fileIdx);
                 }}
                 class="cursor-pointer flex items-center gap-3 p-3 rounded-lg border border-w-line hover:border-w-cyan/30 hover:bg-w-surface/50 transition-all"
+            >
+                {content}
+            </div>
+        );
+    }
+
+    if (playableUrl) {
+        return (
+            <div
+                onClick={() => onStreamClick(null, null, stream)}
+                class="cursor-pointer flex items-center gap-3 p-3 rounded-lg border border-w-line hover:border-w-cyan/30 hover:bg-w-surface/50 transition-all"
+                data-stream-kind="url"
             >
                 {content}
             </div>

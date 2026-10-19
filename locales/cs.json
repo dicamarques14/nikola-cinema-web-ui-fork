@@ -2189,5 +2189,17 @@
     "embed.off.link": "serveru Webtor",
     "embed.unauthorized.title": "Tento přehrávač není na tomto webu povolen",
     "embed.unauthorized.text": "Je to váš web? Přidejte jeho doménu ve {{.Link}}.",
-    "embed.unauthorized.link": "svém profilu na serveru Webtor"
+    "embed.unauthorized.link": "svém profilu na serveru Webtor",
+    "discover.directLink": "Přímý odkaz",
+    "discover.notSupportedYet": "Zatím nepodporováno",
+    "discover.urlOpenError": "Tento stream se nepodařilo otevřít. Doplněk ho možná změnil — zkuste to znovu.",
+    "urlstream.queued": "Čeká se na import do Webtoru…",
+    "urlstream.downloading": "Import do Webtoru… {n} %",
+    "urlstream.hashing": "Příprava plného přehrávače… {n} %",
+    "urlstream.storing": "Skoro hotovo…",
+    "urlstream.ready": "Připraveno v plném přehrávači s titulky, knihovnou a Vaultem. Přepnutí za {n} s.",
+    "urlstream.switchNow": "Přepnout hned",
+    "urlstream.stay": "Zůstat zde",
+    "urlstream.failed": "Import se nezdařil. Přehrávání pokračuje ze zdroje.",
+    "urlstream.proxyOnly": "Přehrává se přímo ze zdroje doplňku."
 }

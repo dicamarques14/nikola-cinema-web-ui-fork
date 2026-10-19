@@ -20,6 +20,11 @@ var jwtLike = regexp.MustCompile(`eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za
 // addon), /unsubscribe/ and /email/verify/.
 var tokenSegment = regexp.MustCompile(`((?:^|/)(?:token|unsubscribe|verify)/)[^/?#\s]+`)
 
+// urlSeedSig is the HMAC in a direct-URL web seed link
+// (/urlseed/<id>/<sig>/<name>, handlers/urlstream): whoever has it can read
+// the file.
+var urlSeedSig = regexp.MustCompile(`((?:^|/)urlseed/[^/?#\s]+/)[^/?#\s]+`)
+
 const redacted = "<redacted>"
 
 // RedactURL is a request path (query included), a whole URL, or any log text
@@ -28,5 +33,6 @@ const redacted = "<redacted>"
 func RedactURL(s string) string {
 	s = credentialParam.ReplaceAllString(s, "${1}"+redacted)
 	s = jwtLike.ReplaceAllString(s, redacted)
+	s = urlSeedSig.ReplaceAllString(s, "${1}"+redacted)
 	return tokenSegment.ReplaceAllString(s, "${1}"+redacted)
 }

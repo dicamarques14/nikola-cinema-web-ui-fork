@@ -105,6 +105,25 @@ export function sourceName(stream) {
     return parseStreamName(stream?.name).source;
 }
 
+// streamKind is what a row can do with a stream:
+//   'torrent'  -- an infohash (in the field or in a link), the usual path;
+//   'url'      -- a plain HTTP(S) file an addon serves directly, played
+//                 through the server (docs/url_streams.md) when the instance
+//                 allows it (window._urlStreams);
+//   'adaptive' -- an HLS/DASH manifest: not supported yet;
+//   'none'     -- nothing playable here (externalUrl, ytId, ...).
+// externalUrl is a page to open in a browser, never a file -- ignored.
+export function streamKind(stream) {
+    if (!stream) return 'none';
+    if (extractInfoHash(stream)) return 'torrent';
+    const u = stream.url;
+    if (typeof u !== 'string' || !/^https?:\/\//i.test(u)) return 'none';
+    let path = u;
+    try { path = new URL(u).pathname; } catch { /* keep the raw string */ }
+    if (/\.(m3u8|mpd)$/i.test(path)) return 'adaptive';
+    return 'url';
+}
+
 export function extractInfoHash(stream) {
     if (stream.infoHash) return stream.infoHash.toLowerCase();
     const hashRe = /([0-9a-fA-F]{40})/;

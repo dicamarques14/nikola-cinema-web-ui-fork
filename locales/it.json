@@ -2157,5 +2157,17 @@
     "embed.off.link": "server Webtor",
     "embed.unauthorized.title": "Questo player non è consentito su questo sito",
     "embed.unauthorized.text": "È il tuo sito? Aggiungi il suo dominio nel {{.Link}}.",
-    "embed.unauthorized.link": "tuo profilo sul server Webtor"
+    "embed.unauthorized.link": "tuo profilo sul server Webtor",
+    "discover.directLink": "Link diretto",
+    "discover.notSupportedYet": "Non ancora supportato",
+    "discover.urlOpenError": "Impossibile aprire questo stream. L'addon potrebbe averlo cambiato: riprova.",
+    "urlstream.queued": "In attesa di importazione in Webtor…",
+    "urlstream.downloading": "Importazione in Webtor… {n}%",
+    "urlstream.hashing": "Preparazione del player completo… {n}%",
+    "urlstream.storing": "Quasi pronto…",
+    "urlstream.ready": "Pronto nel player completo, con sottotitoli, libreria e Vault. Passaggio tra {n} s.",
+    "urlstream.switchNow": "Passa ora",
+    "urlstream.stay": "Resta qui",
+    "urlstream.failed": "Importazione non riuscita. La riproduzione continua dalla sorgente.",
+    "urlstream.proxyOnly": "Riproduzione direttamente dalla sorgente dell'addon."
 }

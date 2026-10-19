@@ -2157,5 +2157,17 @@
     "embed.off.link": "serveur Webtor",
     "embed.unauthorized.title": "Ce lecteur n'est pas autorisé sur ce site",
     "embed.unauthorized.text": "C'est votre site ? Ajoutez son domaine dans {{.Link}}.",
-    "embed.unauthorized.link": "votre profil sur le serveur Webtor"
+    "embed.unauthorized.link": "votre profil sur le serveur Webtor",
+    "discover.directLink": "Lien direct",
+    "discover.notSupportedYet": "Pas encore pris en charge",
+    "discover.urlOpenError": "Impossible d'ouvrir ce flux. L'addon l'a peut-être modifié — réessayez.",
+    "urlstream.queued": "En attente d'import dans Webtor…",
+    "urlstream.downloading": "Import dans Webtor… {n} %",
+    "urlstream.hashing": "Préparation du lecteur complet… {n} %",
+    "urlstream.storing": "Presque prêt…",
+    "urlstream.ready": "Prêt dans le lecteur complet, avec sous-titres, bibliothèque et Vault. Bascule dans {n} s.",
+    "urlstream.switchNow": "Basculer maintenant",
+    "urlstream.stay": "Rester ici",
+    "urlstream.failed": "L'import a échoué. La lecture continue depuis la source.",
+    "urlstream.proxyOnly": "Lecture directe depuis la source de l'addon."
 }

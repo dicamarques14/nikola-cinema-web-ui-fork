@@ -2261,5 +2261,17 @@
     "@embed.unauthorized.title": "Shown inside an iframe on another website whose domain is not on this Webtor server's allowed embed domains. embed.unauthorized.link is the link text inside embed.unauthorized.text (the profile page of this server) and must fit its grammar.",
     "embed.unauthorized.title": "This player is not allowed on this website",
     "embed.unauthorized.text": "Own this website? Add its domain in {{.Link}}.",
-    "embed.unauthorized.link": "your profile on the Webtor server"
+    "embed.unauthorized.link": "your profile on the Webtor server",
+    "discover.directLink": "Direct link",
+    "discover.notSupportedYet": "Not supported yet",
+    "discover.urlOpenError": "Could not open this stream. The addon may have changed it — try again.",
+    "urlstream.queued": "Waiting to import into Webtor…",
+    "urlstream.downloading": "Importing into Webtor… {n}%",
+    "urlstream.hashing": "Preparing the full player… {n}%",
+    "urlstream.storing": "Almost ready…",
+    "urlstream.ready": "Ready in the full player with subtitles, library and Vault. Switching in {n} s.",
+    "urlstream.switchNow": "Switch now",
+    "urlstream.stay": "Stay here",
+    "urlstream.failed": "Import failed. Playback continues from the source.",
+    "urlstream.proxyOnly": "Playing straight from the addon's source."
 }

@@ -602,3 +602,10 @@ Uses the [Stremio addon protocol](https://github.com/Stremio/stremio-addon-sdk/b
 ## Cached streams first
 
 Streams Webtor already holds get an "Instant" chip and are listed first — see `docs/cache_index.md` (`POST /discover/availability`).
+
+## Direct-URL streams
+
+Addon streams that are plain HTTP(S) files (no infohash) are clickable when the instance
+sets `URL_STREAMS_ENABLED` (`window._urlStreams`): `streamKind()` in `lib/discover/stream.js`
+sorts rows into torrent / url / adaptive / none, and a url row posts to `/url/open`. HLS/DASH
+rows stay greyed out with "Not supported yet". See `docs/url_streams.md`.

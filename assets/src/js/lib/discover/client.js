@@ -305,9 +305,15 @@ export class StremioClient {
         const res = await fetchWithTimeout(url, signal);
         if (!res.ok) throw new Error('Failed to fetch streams');
         const data = await res.json();
+        // The addon's row id, type and id ride along so a direct-URL row
+        // can ask the server to fetch the same stream itself (url_streams.md).
+        const addonId = this.seedsByUrl.get(addon.baseUrl)?.id || '';
         return (data.streams || []).map(s => ({
             ...s,
             addonName: addon.manifest.name || 'Unknown',
+            addonId,
+            streamType: type,
+            streamId: id,
         }));
     }
 

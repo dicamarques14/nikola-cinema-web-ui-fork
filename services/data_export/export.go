@@ -54,7 +54,23 @@ type Export struct {
 	// minutes (confirmed ones are deleted on the device's next poll), so the
 	// list is almost always empty — included because the table is user-keyed.
 	PendingDeviceAuth []DeviceAuthItem `json:"pending_device_auth"`
-	Vault             *VaultData       `json:"vault,omitempty"`
+	// UrlSources are the direct-URL addon streams the account opened
+	// (docs/url_streams.md). The link and its headers are credentials the
+	// UI never shows, so they are left out.
+	UrlSources []UrlSourceItem `json:"url_sources"`
+	Vault      *VaultData      `json:"vault,omitempty"`
+}
+
+type UrlSourceItem struct {
+	ContentType string    `json:"content_type"`
+	ContentID   string    `json:"content_id"`
+	Title       string    `json:"title"`
+	Filename    string    `json:"filename"`
+	Size        int64     `json:"size"`
+	Status      string    `json:"status"`
+	InfoHash    *string   `json:"info_hash,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 type UserData struct {
@@ -329,6 +345,9 @@ func Build(ctx context.Context, db *pg.DB, u *models.User) (*Export, error) {
 		return nil, err
 	}
 	if err := exp.fillSubtitlesAndTokens(ctx, db, u.UserID); err != nil {
+		return nil, err
+	}
+	if err := exp.fillUrlSources(ctx, db, u.UserID); err != nil {
 		return nil, err
 	}
 	if err := exp.fillVault(ctx, db, u.UserID); err != nil {
@@ -689,6 +708,28 @@ func (e *Export) fillSubtitlesAndTokens(ctx context.Context, db *pg.DB, uID uuid
 			Status:     d.Status,
 			ExpiresAt:  d.ExpiresAt,
 			CreatedAt:  d.CreatedAt,
+		})
+	}
+	return nil
+}
+
+func (e *Export) fillUrlSources(ctx context.Context, db *pg.DB, uID uuid.UUID) error {
+	rows, err := models.ListAllUserUrlSources(ctx, db, uID)
+	if err != nil {
+		return errors.Wrap(err, "failed to load url sources")
+	}
+	e.UrlSources = make([]UrlSourceItem, 0, len(rows))
+	for _, r := range rows {
+		e.UrlSources = append(e.UrlSources, UrlSourceItem{
+			ContentType: r.ContentType,
+			ContentID:   r.ContentID,
+			Title:       r.Title,
+			Filename:    r.Filename,
+			Size:        r.Size,
+			Status:      string(r.Status),
+			InfoHash:    r.InfoHash,
+			CreatedAt:   r.CreatedAt,
+			UpdatedAt:   r.UpdatedAt,
 		})
 	}
 	return nil

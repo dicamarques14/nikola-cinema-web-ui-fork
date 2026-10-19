@@ -70,6 +70,10 @@ type indexData struct {
 	// modal's 4K switch reads it (lib/discover/playback.js), to promise 4K
 	// HEVC only where it can play.
 	Passthrough passthroughView
+	// URLStreams says whether addon streams that are plain HTTP(S) files
+	// can be played here (URL_STREAMS_ENABLED, docs/url_streams.md); off,
+	// their rows stay greyed out as before.
+	URLStreams bool
 }
 
 type passthroughView struct {
@@ -119,15 +123,18 @@ type Handler struct {
 	// caps answers whether the transcoder passes HEVC through; see
 	// indexData.Passthrough.
 	caps capabilityReader
+	// urlStreams mirrors indexData.URLStreams.
+	urlStreams bool
 }
 
-func RegisterHandler(r *gin.Engine, tm *template.Manager[*web.Context], pg *cs.PG, en *enrich.Enricher, sb *stremio.Builder, aiEnabled bool, index *cache_index.CacheIndex, caps *transcodercaps.Service) {
+func RegisterHandler(r *gin.Engine, tm *template.Manager[*web.Context], pg *cs.PG, en *enrich.Enricher, sb *stremio.Builder, aiEnabled bool, index *cache_index.CacheIndex, caps *transcodercaps.Service, urlStreams bool) {
 	h := &Handler{
-		tb:        tm.MustRegisterViews("discover/*").WithLayout("main"),
-		pg:        pg,
-		en:        en,
-		sb:        sb,
-		aiEnabled: aiEnabled,
+		tb:         tm.MustRegisterViews("discover/*").WithLayout("main"),
+		pg:         pg,
+		en:         en,
+		sb:         sb,
+		aiEnabled:  aiEnabled,
+		urlStreams: urlStreams,
 	}
 	if index != nil {
 		h.ci = index
@@ -195,6 +202,7 @@ func (h *Handler) index(c *gin.Context) {
 		Prefs:       streamPrefs(c.Request.Context(), db, u),
 		AIEnabled:   h.aiEnabled,
 		Passthrough: passthroughFor(h.caps),
+		URLStreams:  h.urlStreams,
 	}))
 }
 

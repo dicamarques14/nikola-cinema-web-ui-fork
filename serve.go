@@ -45,6 +45,7 @@ import (
 	"github.com/webtor-io/web-ui/handlers/tests"
 	"github.com/webtor-io/web-ui/handlers/torznab_indexer"
 	"github.com/webtor-io/web-ui/handlers/trial"
+	"github.com/webtor-io/web-ui/handlers/urlstream"
 	ush "github.com/webtor-io/web-ui/handlers/user_subtitle"
 	uvsh "github.com/webtor-io/web-ui/handlers/user_video_status"
 	vh "github.com/webtor-io/web-ui/handlers/vault"
@@ -75,6 +76,7 @@ import (
 	"github.com/webtor-io/web-ui/services/turnstile"
 	"github.com/webtor-io/web-ui/services/umami"
 	ua "github.com/webtor-io/web-ui/services/url_alias"
+	"github.com/webtor-io/web-ui/services/urlsource"
 	usettings "github.com/webtor-io/web-ui/services/user_settings"
 	usv "github.com/webtor-io/web-ui/services/user_subtitle"
 	uvss "github.com/webtor-io/web-ui/services/user_video_status"
@@ -148,6 +150,7 @@ func configureServe(c *cli.Command) {
 	c.Flags = memwatch.RegisterFlags(c.Flags)
 	c.Flags = streamprefs.RegisterFlags(c.Flags)
 	c.Flags = transcodercaps.RegisterFlags(c.Flags)
+	c.Flags = urlsource.RegisterFlags(c.Flags)
 }
 
 func serve(c *cli.Context) error {
@@ -275,6 +278,16 @@ func serve(c *cli.Context) error {
 		return err
 	}
 
+	// Setting direct-URL streams (Stremio addons that serve files over
+	// HTTP; nil unless URL_STREAMS_ENABLED). Its /urlseed web seed is read
+	// by torrent-web-seeder, which has no session: it carries an HMAC of its
+	// own and is mounted here, before the session, auth and only-authorized
+	// layers. The viewer's /url routes are mounted further down, behind a
+	// login. See docs/url_streams.md.
+	urlSrc := urlsource.New(c, pg, stremios.NewClient(c))
+	defer urlSrc.Close()
+	urlstream.RegisterSeedHandler(r, urlSrc, pg)
+
 	// Setting URL Alias
 	ual := ua.New(pg, r)
 	ual.RegisterHandler(r)
@@ -360,6 +373,21 @@ func serve(c *cli.Context) error {
 
 	// Setting ApiClaimsHandler
 	sapi.RegisterHandler(r)
+
+	// The direct-URL import stores the torrent it builds the way an upload
+	// does (StoreResource); without URL_SEED_BASE_URL it stays proxy-only.
+	if urlSrc != nil {
+		urlSrc.SetStore(func(ctx context.Context, b []byte) (string, error) {
+			res, err := sapi.StoreResource(ctx, &api.Claims{}, b)
+			if err != nil {
+				return "", err
+			}
+			if res == nil {
+				return "", errors.New("torrent store returned no resource")
+			}
+			return res.ID, nil
+		})
+	}
 
 	// Setting Migration from v1 to v2
 	wm.RegisterHandler(r)
@@ -605,7 +633,10 @@ func serve(c *cli.Context) error {
 	caps := transcodercaps.New(c)
 	caps.Start()
 	defer caps.Close()
-	discover.RegisterHandler(r, tm, pg, en, sb, recSvc != nil, cacheIndex, caps)
+	discover.RegisterHandler(r, tm, pg, en, sb, recSvc != nil, cacheIndex, caps, urlSrc != nil)
+
+	// Setting direct-URL stream routes (player page, proxy, import status).
+	urlstream.RegisterHandler(r, tm, urlSrc, pg)
 
 	// Setting Discover Watchlist
 	discover_watchlist.RegisterHandler(r, pg, en)

@@ -2189,5 +2189,17 @@
     "embed.off.link": "серверу Webtor",
     "embed.unauthorized.title": "Этот плеер не разрешён на этом сайте",
     "embed.unauthorized.text": "Это ваш сайт? Добавьте его домен в {{.Link}}.",
-    "embed.unauthorized.link": "профиле на сервере Webtor"
+    "embed.unauthorized.link": "профиле на сервере Webtor",
+    "discover.directLink": "Прямая ссылка",
+    "discover.notSupportedYet": "Пока не поддерживается",
+    "discover.urlOpenError": "Не удалось открыть этот поток. Возможно, аддон его изменил — попробуйте ещё раз.",
+    "urlstream.queued": "Ожидание импорта в Webtor…",
+    "urlstream.downloading": "Импорт в Webtor… {n}%",
+    "urlstream.hashing": "Подготовка полного плеера… {n}%",
+    "urlstream.storing": "Почти готово…",
+    "urlstream.ready": "Готово в полном плеере: субтитры, библиотека и Vault. Переход через {n} с.",
+    "urlstream.switchNow": "Перейти сейчас",
+    "urlstream.stay": "Остаться здесь",
+    "urlstream.failed": "Импорт не удался. Воспроизведение продолжается из источника.",
+    "urlstream.proxyOnly": "Смотрите напрямую из источника аддона."
 }

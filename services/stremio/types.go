@@ -4,6 +4,19 @@ package stremio
 type StreamBehaviorHints struct {
 	BingeGroup string `json:"bingeGroup,omitempty"`
 	Filename   string `json:"filename,omitempty"`
+	// The rest describe a direct-URL stream (an addon that serves files
+	// over HTTP rather than torrents). They used to be dropped here, so a
+	// stream passed on to Stremio lost the headers its link needs.
+	NotWebReady  bool                `json:"notWebReady,omitempty"`
+	VideoSize    int64               `json:"videoSize,omitempty"`
+	ProxyHeaders *StreamProxyHeaders `json:"proxyHeaders,omitempty"`
+}
+
+// StreamProxyHeaders are the headers an addon asks the player to send with
+// (request) and expect on (response) a direct-URL stream.
+type StreamProxyHeaders struct {
+	Request  map[string]string `json:"request,omitempty"`
+	Response map[string]string `json:"response,omitempty"`
 }
 
 type StreamItem struct {

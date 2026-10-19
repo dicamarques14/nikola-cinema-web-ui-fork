@@ -2149,5 +2149,17 @@
     "embed.off.link": "Webtor sunucuları",
     "embed.unauthorized.title": "Bu oynatıcıya bu sitede izin verilmiyor",
     "embed.unauthorized.text": "Bu site sizin mi? Alan adını {{.Link}} ekleyin.",
-    "embed.unauthorized.link": "Webtor sunucusundaki profilinize"
+    "embed.unauthorized.link": "Webtor sunucusundaki profilinize",
+    "discover.directLink": "Doğrudan bağlantı",
+    "discover.notSupportedYet": "Henüz desteklenmiyor",
+    "discover.urlOpenError": "Bu akış açılamadı. Eklenti onu değiştirmiş olabilir — tekrar deneyin.",
+    "urlstream.queued": "Webtor'a aktarılmayı bekliyor…",
+    "urlstream.downloading": "Webtor'a aktarılıyor… %{n}",
+    "urlstream.hashing": "Tam oynatıcı hazırlanıyor… %{n}",
+    "urlstream.storing": "Neredeyse hazır…",
+    "urlstream.ready": "Altyazı, kitaplık ve Vault ile tam oynatıcıda hazır. {n} sn içinde geçiliyor.",
+    "urlstream.switchNow": "Şimdi geç",
+    "urlstream.stay": "Burada kal",
+    "urlstream.failed": "Aktarma başarısız oldu. Oynatma kaynaktan devam ediyor.",
+    "urlstream.proxyOnly": "Doğrudan eklentinin kaynağından oynatılıyor."
 }

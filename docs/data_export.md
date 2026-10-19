@@ -71,6 +71,7 @@ omitted entirely when the user has never used the feature.
 | `streaming_backends`  | `models.GetUserStreamingBackends`                                  |
 | `user_subtitles`      | `models.ListAllUserSubtitles`                                      |
 | `access_tokens`       | `models.ListUserAccessTokens`                                      |
+| `url_sources`         | `models.ListAllUserUrlSources` (without `url` / `proxy_headers`)   |
 | `vault.balance`       | `vault.GetUserVP`                                                  |
 | `vault.pledges`       | `vault.GetUserPledges`                                             |
 | `vault.transactions`  | `vault.ListUserTxLogs`                                             |
@@ -101,6 +102,8 @@ fact about the account than an explicit language choice.
 
 - `torznab_indexer.api_key` — write-only credential, never rendered back to
   the user; exported as the `has_api_key` boolean instead.
+- `url_source.url` and `url_source.proxy_headers` — the addon's signed link
+  and CDN headers; credentials the UI never renders (docs/url_streams.md).
 - `ai_enrich.query` — global title-normalisation cache, not user-keyed.
 - AI recommendation quota counters — ephemeral Redis state that rolls over
   daily (`services/recommendations/quota.go`). Not "data we hold about the
