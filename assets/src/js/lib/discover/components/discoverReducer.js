@@ -237,6 +237,10 @@ export function discoverReducer(state, action) {
             const newPage = action.append ? state.page + 1 : 0;
             return { ...state, catalogLoading: false, items: newItems, hasMore: action.hasMore, skip: newItems.length, page: newPage };
         }
+        case 'CATALOG_ABORTED':
+            // An aborted load answers nothing, but it must still drop the
+            // flag: otherwise "Loading catalogs" stays up for good.
+            return { ...state, catalogLoading: false };
         case 'CATALOG_ERROR':
             return state.items.length > 0
                 ? { ...state, catalogLoading: false }
@@ -244,7 +248,8 @@ export function discoverReducer(state, action) {
         case 'SEARCH_START':
             // Search always exits the watchlist filter — search runs against
             // Cinemeta + the user's catalogs, not the local saved list.
-            return { ...state, isSearchMode: true, searchQuery: action.query, searchResults: [], searchLoading: true, searchType: 'all', watchlistFilterEnabled: false };
+            // It also ends any catalog load: the search aborts it.
+            return { ...state, isSearchMode: true, searchQuery: action.query, searchResults: [], searchLoading: true, searchType: 'all', watchlistFilterEnabled: false, watchlistType: 'all', catalogLoading: false };
         case 'SEARCH_RESULTS':
             return { ...state, searchLoading: false, searchResults: action.results };
         case 'SELECT_SEARCH_TYPE':

@@ -79,6 +79,9 @@ export function DiscoverApp({ addonUrls, addonSeeds, hasCustomAddons }) {
     const [ratingTarget, setRatingTarget] = useState(null);
     const clientRef = useRef(null);
     const abortRef = useRef(null);
+    // Generation of the latest loadCatalog: an aborted load clears the
+    // loading flag only if no newer load has taken over.
+    const catalogGenRef = useRef(0);
     // Stream loads are generation-guarded: closing the modal or opening
     // another title invalidates the run in flight, so its late dispatch
     // cannot re-open a modal the user closed or overwrite a newer one.
@@ -125,6 +128,7 @@ export function DiscoverApp({ addonUrls, addonSeeds, hasCustomAddons }) {
         // loads. Without this short-circuit we'd hit the network and the
         // generic "Failed to load catalog" toast would mask the real cause.
         if (catalog.disabled) return;
+        const gen = ++catalogGenRef.current;
         dispatch({ type: 'CATALOG_LOADING' });
         abortCatalog();
         abortRef.current = new AbortController();
@@ -144,7 +148,10 @@ export function DiscoverApp({ addonUrls, addonSeeds, hasCustomAddons }) {
                 if (Object.keys(statuses).length) dispatch({ type: 'USER_STATUSES_MERGED', statuses });
             });
         } catch (e) {
-            if (e.name === 'AbortError') return;
+            if (e.name === 'AbortError') {
+                if (gen === catalogGenRef.current) dispatch({ type: 'CATALOG_ABORTED' });
+                return;
+            }
             dispatch({ type: 'CATALOG_ERROR', message: t('discover.catalogLoadError') });
         }
     }, [client]);
@@ -238,16 +245,19 @@ export function DiscoverApp({ addonUrls, addonSeeds, hasCustomAddons }) {
         return () => { cancelled = true; abortCatalog(); };
     }, [client]);
 
-    // Load catalog when selection changes after init
+    // Load catalog when selection changes after init. Not behind the
+    // watchlist: that grid does not show it, and a load still running there
+    // would only be aborted by the next search. Leaving the watchlist
+    // re-runs this effect.
     const prevCatalogRef = useRef(null);
     useEffect(() => {
-        if (state.phase !== 'ready' || state.isSearchMode) return;
+        if (state.phase !== 'ready' || state.isSearchMode || state.watchlistFilterEnabled) return;
         if (!state.selectedCatalog) return;
         const key = `${state.selectedCatalog.baseUrl}::${state.selectedCatalog.id}::${state.selectedType}`;
         if (prevCatalogRef.current === key && state.skip > 0) return;
         prevCatalogRef.current = key;
         loadCatalog(state.selectedCatalog, 0, []);
-    }, [state.phase, state.selectedCatalog, state.selectedType, state.isSearchMode, loadCatalog]);
+    }, [state.phase, state.selectedCatalog, state.selectedType, state.isSearchMode, state.watchlistFilterEnabled, loadCatalog]);
 
     // Batch-localize whatever grid surface is on screen through the server
     // enrichment pipeline (POST /discover/localize). localizeClient holds a
@@ -318,7 +328,7 @@ export function DiscoverApp({ addonUrls, addonSeeds, hasCustomAddons }) {
 
         // Push history entry when first entering search mode (not during popstate)
         if (!state.isSearchMode && !url.isPopstate.current) {
-            url.push({ search: query, 'search-type': null, type: null, 'catalog-base': null, 'catalog-id': null, id: null, season: null, episode: null });
+            url.push({ search: query, 'search-type': null, watchlist: null, 'watchlist-type': null, type: null, 'catalog-base': null, 'catalog-id': null, id: null, season: null, episode: null });
         }
 
         const gen = ++searchGenRef.current;
@@ -819,7 +829,9 @@ export function DiscoverApp({ addonUrls, addonSeeds, hasCustomAddons }) {
         const catalogId = urlParams.get('catalog-id');
         const search = urlParams.get('search');
         const searchType = urlParams.get('search-type');
-        const watchlist = urlParams.get('watchlist') === '1';
+        // A search wins over the watchlist: an entry carrying both is a
+        // search started from the watchlist.
+        const watchlist = urlParams.get('watchlist') === '1' && !urlParams.get('search');
         const watchlistType = urlParams.get('watchlist-type');
 
         const cur = stateRef.current;
@@ -843,7 +855,13 @@ export function DiscoverApp({ addonUrls, addonSeeds, hasCustomAddons }) {
         }
 
         // Handle watchlist mode toggle. We do this before search so back
-        // navigation from a search-while-watchlist-open lands correctly.
+        // navigation from a search-while-watchlist-open lands correctly
+        // (the search itself already won above: `watchlist` is false when
+        // the entry has a search). Back from a search to the watchlist
+        // leaves search mode first, or its results would stay on screen.
+        if (watchlist && cur.isSearchMode) {
+            url.withPopstate(() => { abortCatalog(); dispatch({ type: 'EXIT_SEARCH' }); });
+        }
         if (watchlist !== cur.watchlistFilterEnabled) {
             url.withPopstate(() => setMode(watchlist ? 'watchlist' : 'catalog', { skipUrl: true }));
         }
@@ -1327,6 +1345,8 @@ export function DiscoverApp({ addonUrls, addonSeeds, hasCustomAddons }) {
                 ? { watchlist: '1', 'catalog-base': null, 'catalog-id': null, type: null, page: null, id: null, season: null, episode: null }
                 : { watchlist: null, id: null, season: null, episode: null });
         }
+        // The catalog grid is not shown behind the watchlist; stop its load.
+        if (wantWatchlist) abortCatalog();
         dispatch({ type: 'WATCHLIST_FILTER_SET', enabled: wantWatchlist });
         if (wantWatchlist && !state.watchlistItemsLoaded) {
             loadWatchlistItems();
