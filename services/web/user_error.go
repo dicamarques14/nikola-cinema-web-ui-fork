@@ -13,6 +13,10 @@ import (
 type UserError struct {
 	Key string // i18n key, e.g. "error.forbidden"
 	Err error  // original error for logging
+	// Num is an optional number the message quotes as {{.Num}} (an HTTP
+	// status, a protocol error code). Never free text: it travels in the
+	// redirect URL, which anyone can write.
+	Num int
 }
 
 func (e *UserError) Error() string {
@@ -27,6 +31,27 @@ func (e *UserError) Unwrap() error {
 func NewUserError(key string, err error) *UserError {
 	return &UserError{Key: key, Err: err}
 }
+
+// NewUserErrorNum creates a UserError whose message quotes a number.
+func NewUserErrorNum(key string, num int, err error) *UserError {
+	return &UserError{Key: key, Err: err, Num: num}
+}
+
+// ErrNumOf returns the number a UserError's message quotes, or 0.
+func ErrNumOf(err error) int {
+	var ue *UserError
+	if errors.As(err, &ue) && ue.Num >= minErrNum && ue.Num <= maxErrNum {
+		return ue.Num
+	}
+	return 0
+}
+
+// The range ErrNum may take: wide enough for HTTP statuses and Torznab error
+// codes, narrow enough that a crafted URL cannot put anything else on a page.
+const (
+	minErrNum = 1
+	maxErrNum = 999
+)
 
 // ClassifyError determines a user-facing i18n key from the error content.
 // If the error is already a UserError, its key is returned directly.

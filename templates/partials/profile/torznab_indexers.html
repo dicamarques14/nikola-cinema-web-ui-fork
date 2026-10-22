@@ -10,7 +10,8 @@
         <!-- Add Indexer Form -->
         <div class="mb-7">
             {{ $indexerCount := len .Data.TorznabIndexers }}
-            {{ $canAddIndexer := or (lt $indexerCount 3) (.Claims | isPaid) }}
+            {{ $indexerLimit := .Data.TorznabIndexerLimit }}
+            {{ $canAddIndexer := or (eq $indexerLimit 0) (lt $indexerCount $indexerLimit) (.Claims | isPaid) }}
             <form method="post" enctype="multipart/form-data" data-async-push-state="false" action="{{ langPath $.Lang "/torznab/indexer/add" }}" data-async-target="#torznab-indexers" class="flex flex-col sm:flex-row gap-2{{ if not $canAddIndexer }} opacity-50{{ end }}">
                 <input
                     name="url"
@@ -43,7 +44,7 @@
             {{ end }}
             {{ if .Data.ErrKey }}
                 <div class="text-sm text-error mt-3">
-                    {{ t $.Lang .Data.ErrKey }}
+                    {{ if .Data.ErrNum }}{{ tp $.Lang .Data.ErrKey "Num" .Data.ErrNum }}{{ else }}{{ t $.Lang .Data.ErrKey }}{{ end }}
                 </div>
             {{ end }}
         </div>

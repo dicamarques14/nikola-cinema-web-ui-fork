@@ -34,6 +34,7 @@ import (
 	rss "github.com/webtor-io/web-ui/services/release_subscription"
 	"github.com/webtor-io/web-ui/services/s3"
 	"github.com/webtor-io/web-ui/services/stremio"
+	"github.com/webtor-io/web-ui/services/torznab"
 	ua "github.com/webtor-io/web-ui/services/url_alias"
 	usettings "github.com/webtor-io/web-ui/services/user_settings"
 	"github.com/webtor-io/web-ui/services/vault"
@@ -87,10 +88,14 @@ type Data struct {
 	VaultStats            *vault.UserStats
 	UserSettings          *models.UserSettings
 	ErrKey                string
-	DisableWebDAV         bool
-	DisableS3             bool
-	DisableAPI            bool
-	DisableEmbed          bool
+	// ErrNum is the number ErrKey's message quotes ({{.Num}}), 0 for none.
+	ErrNum int
+	// TorznabIndexerLimit is the free-tier indexer cap, 0 for unlimited.
+	TorznabIndexerLimit int
+	DisableWebDAV       bool
+	DisableS3           bool
+	DisableAPI          bool
+	DisableEmbed        bool
 	// IdentityEditable gates the administrator-password section: it must
 	// only ever render when no external identity provider owns this
 	// account's identity (auth.IdentityManagedExternally is false), never
@@ -154,6 +159,7 @@ type Handler struct {
 	s3Endpoint    string
 	apiEndpoint   string
 	domain        string
+	maxIndexers   int
 	adminStore    *adminauth.Store
 	// identityEditable is auth.IdentityManagedExternally negated: true when
 	// this deployment's own user row is the operator's identity (nothing
@@ -199,6 +205,7 @@ func RegisterHandler(c *cli.Context, r *gin.Engine, tm *template.Manager[*web.Co
 		s3Endpoint:       s3.PublicEndpoint(c),
 		apiEndpoint:      libapi.PublicEndpoint(c),
 		domain:           c.String(common.DomainFlag),
+		maxIndexers:      torznab.MaxIndexers(c),
 		adminStore:       a.AdminStore(),
 		identityEditable: !a.IdentityManagedExternally(),
 		// Three in a row, then one per five minutes. Three covers a typo
@@ -573,6 +580,8 @@ func (s *Handler) get(c *gin.Context) {
 		VaultStats:            vaultStats,
 		UserSettings:          userSettings,
 		ErrKey:                c.Query("err"),
+		ErrNum:                web.ErrNumFromQuery(c.Request.URL.Query()),
+		TorznabIndexerLimit:   s.maxIndexers,
 		HasPayments:           hasPayments,
 		Billing:               s.billing,
 		DisableWebDAV:         s.disableWebDAV,

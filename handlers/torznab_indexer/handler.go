@@ -22,11 +22,6 @@ import (
 	"github.com/webtor-io/web-ui/services/web"
 )
 
-// freeTierLimit matches the Stremio addon limit — both are user-configured
-// upstreams and there is no reason for a user to reason about two different
-// allowances.
-const freeTierLimit = 3
-
 // validateTimeout bounds the caps probe that runs while the user waits on
 // the add form.
 const validateTimeout = 15 * time.Second
@@ -35,6 +30,9 @@ type Handler struct {
 	pg        *cs.PG
 	validator *torznab.Validator
 	domain    string
+	// maxIndexers is the free-tier cap (torznab.MaxIndexersFlag); 0 means
+	// unlimited, which is what the self-hosted image sets.
+	maxIndexers int
 }
 
 func RegisterHandler(c *cli.Context, v *torznab.Validator, r *gin.Engine, pg *cs.PG) error {
@@ -48,9 +46,10 @@ func RegisterHandler(c *cli.Context, v *torznab.Validator, r *gin.Engine, pg *cs
 	}
 
 	h := &Handler{
-		pg:        pg,
-		validator: v,
-		domain:    d,
+		pg:          pg,
+		validator:   v,
+		domain:      d,
+		maxIndexers: torznab.MaxIndexers(c),
 	}
 
 	gr := r.Group("/torznab/indexer")
@@ -94,7 +93,7 @@ func (s *Handler) addIndexer(ctx context.Context, rawURL, apiKey string, user *a
 		return errors.New("no db")
 	}
 
-	freeTier := cla.Context.Tier.Id == 0
+	freeTier := cla.Context.Tier.Id == 0 && s.maxIndexers > 0
 	if freeTier {
 		if err := s.checkFreeTierLimit(ctx, user); err != nil {
 			return err
@@ -118,11 +117,11 @@ func (s *Handler) addIndexer(ctx context.Context, rawURL, apiKey string, user *a
 	defer cancel()
 	name, caps, err := s.validator.ValidateAndFetch(vCtx, torznab.Endpoint{URL: feedURL, APIKey: key})
 	if err != nil {
-		// "We cannot route to this address" and "your key is wrong" are the
-		// two mistakes users actually make, and only the second one can be
-		// fixed on this form — so they must not share the generic message.
-		if torznab.IsUnreachable(err) {
-			return web.NewUserError("error.indexerUnreachable", err)
+		// "We cannot route to this address", "this address is private" and
+		// "your key is wrong" are the mistakes users actually make, and each
+		// has a different fix — so they must not share the generic message.
+		if ue := classifyAddError(err); ue != nil {
+			return ue
 		}
 		return err
 	}
@@ -148,8 +147,8 @@ func (s *Handler) checkFreeTierLimit(ctx context.Context, user *auth.User) error
 	if err != nil {
 		return err
 	}
-	if currentCount >= freeTierLimit {
-		return errors.New("maximum 3 indexers allowed for free tier")
+	if torznab.IndexerLimitReached(currentCount, s.maxIndexers, false) {
+		return errors.Errorf("maximum %d indexers allowed for free tier", s.maxIndexers)
 	}
 	return nil
 }
@@ -307,4 +306,3 @@ func (s *Handler) refreshCaps(c *gin.Context) {
 		FetchedAt: time.Now(),
 	})
 }
-

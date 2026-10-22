@@ -260,3 +260,63 @@ func TestClassifyError_DependencyOutageIs503(t *testing.T) {
 		}
 	}
 }
+
+// A UserError's Num travels next to ?err= the same way, is dropped when the
+// next error has none, and only a small positive number comes back out of a
+// URL anyone can write. Every locale renders the indexer messages with it.
+func TestErrNumSurvivesTheRedirect(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	redirect := func(returnURL string, err error) url.Values {
+		t.Helper()
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
+		RedirectWithErrorAndPath(c, returnURL, err)
+		loc, perr := url.Parse(w.Header().Get("Location"))
+		if perr != nil {
+			t.Fatal(perr)
+		}
+		return loc.Query()
+	}
+	ue := NewUserErrorNum("error.indexerHttpStatus", 404, errors.New("fetch http://x/api?apikey=secret: unexpected status 404"))
+	if ClassifyError(ue) != "error.indexerHttpStatus" || ErrNumOf(ue) != 404 {
+		t.Fatalf("classify %q num %d", ClassifyError(ue), ErrNumOf(ue))
+	}
+	q := redirect("/profile", ue)
+	if q.Get("err") != "error.indexerHttpStatus" || q.Get("err_num") != "404" || ErrNumFromQuery(q) != 404 {
+		t.Fatalf("query %v", q)
+	}
+	if strings.Contains(q.Encode(), "secret") {
+		t.Fatalf("redirect leaks the wrapped error: %v", q)
+	}
+	q = redirect("/profile?status=error&err=error.indexerHttpStatus&err_num=404", NewUserError("error.indexerInvalidApiKey", nil))
+	if q.Has("err_num") {
+		t.Fatalf("stale err_num kept: %v", q)
+	}
+	for _, raw := range []string{"", "err_num=0", "err_num=-1", "err_num=1000", "err_num=x", "err_num=4%3Cb%3E"} {
+		v, _ := url.ParseQuery(raw)
+		if got := ErrNumFromQuery(v); got != 0 {
+			t.Errorf("%q: got %d, want 0", raw, got)
+		}
+	}
+
+	root, err := os.OpenRoot("../../locales")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = root.Close() }()
+	svc := i18n.New(root.FS())
+	for _, lang := range i18n.SupportedLangs {
+		loc := svc.Localizer(lang)
+		for _, key := range []string{"error.indexerHttpStatus", "error.indexerRejected"} {
+			msg := i18n.TranslateWithLocalizerData(loc, key, map[string]any{"Num": 503})
+			if msg == key || strings.Contains(msg, "<no value>") || !strings.Contains(msg, "503") {
+				t.Errorf("%s %s: %q", lang, key, msg)
+			}
+		}
+		msg := i18n.TranslateWithLocalizer(loc, "error.indexerPrivateAddress")
+		if !strings.Contains(msg, "TORZNAB_ALLOW_PRIVATE_NETWORK=true") {
+			t.Errorf("%s error.indexerPrivateAddress does not name the setting: %q", lang, msg)
+		}
+	}
+}

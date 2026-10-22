@@ -62,12 +62,16 @@ func wantsJSON(c *gin.Context) bool {
 func RedirectWithErrorAndPath(c *gin.Context, path string, serr error) {
 	errKey := ClassifyError(serr)
 	args := ErrArgsOf(serr)
+	num := ErrNumOf(serr)
 	log.WithError(serr).WithField("error_key", errKey).WithField("path", path).Warn("redirect with error")
 
 	if wantsJSON(c) {
 		body := gin.H{"status": "error", "message": errKey}
 		if args != nil {
 			body["count"], body["full"] = args.Count, args.Full
+		}
+		if num != 0 {
+			body["num"] = num
 		}
 		c.JSON(http.StatusOK, body)
 		return
@@ -85,6 +89,10 @@ func RedirectWithErrorAndPath(c *gin.Context, path string, serr error) {
 	// answer to an earlier error: its numbers must not outlive their key.
 	q.Del(errCountParam)
 	q.Del(errFullParam)
+	q.Del(errNumParam)
+	if num != 0 {
+		q.Set(errNumParam, strconv.Itoa(num))
+	}
 	if args != nil {
 		q.Set(errCountParam, strconv.Itoa(args.Count))
 		q.Set(errFullParam, strconv.Itoa(args.Full))
@@ -97,7 +105,18 @@ func RedirectWithErrorAndPath(c *gin.Context, path string, serr error) {
 const (
 	errCountParam = "err_count"
 	errFullParam  = "err_full"
+	errNumParam   = "err_num"
 )
+
+// ErrNumFromQuery reads back the UserError.Num RedirectWithErrorAndPath put
+// next to ?err=, or 0 when it is absent or out of range.
+func ErrNumFromQuery(q url.Values) int {
+	n, err := strconv.Atoi(q.Get(errNumParam))
+	if err != nil || n < minErrNum || n > maxErrNum {
+		return 0
+	}
+	return n
+}
 
 // ErrArgsFromQuery reads back what RedirectWithErrorAndPath put next to
 // ?err=, or nil. The URL is anyone's to write, so only what an infohash can
