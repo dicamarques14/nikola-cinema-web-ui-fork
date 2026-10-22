@@ -24,6 +24,7 @@ import (
 	hi18n "github.com/webtor-io/web-ui/handlers/i18n"
 	wi "github.com/webtor-io/web-ui/handlers/index"
 	"github.com/webtor-io/web-ui/handlers/instructions"
+	wjf "github.com/webtor-io/web-ui/handlers/jellyfin"
 	wj "github.com/webtor-io/web-ui/handlers/job"
 	"github.com/webtor-io/web-ui/handlers/legal"
 	"github.com/webtor-io/web-ui/handlers/library"
@@ -58,6 +59,7 @@ import (
 	ci "github.com/webtor-io/web-ui/services/cache_index"
 	"github.com/webtor-io/web-ui/services/common"
 	si18n "github.com/webtor-io/web-ui/services/i18n"
+	"github.com/webtor-io/web-ui/services/jellyfin"
 	"github.com/webtor-io/web-ui/services/libapi"
 	lr "github.com/webtor-io/web-ui/services/link_resolver"
 	"github.com/webtor-io/web-ui/services/memwatch"
@@ -151,6 +153,7 @@ func configureServe(c *cli.Command) {
 	c.Flags = streamprefs.RegisterFlags(c.Flags)
 	c.Flags = transcodercaps.RegisterFlags(c.Flags)
 	c.Flags = urlsource.RegisterFlags(c.Flags)
+	c.Flags = jellyfin.RegisterFlags(c.Flags)
 }
 
 func serve(c *cli.Context) error {
@@ -468,6 +471,18 @@ func serve(c *cli.Context) error {
 		c.Next()
 	})
 
+	// Jellyfin (nil unless JELLYFIN_URL). Its navbar link is shown to the
+	// administrator only, the same people the /jellyfin routes admit; the
+	// auth middleware above has already decided who that is.
+	jf, err := jellyfin.New(c)
+	if err != nil {
+		return err
+	}
+	r.Use(func(c *gin.Context) {
+		w.SetJellyfinEnabled(c, jf != nil && auth.IsAdmin(c))
+		c.Next()
+	})
+
 	// Setting Notification. Built here (earlier than the rest of the
 	// notification wiring below) so the unread-count middleware right after
 	// it can close over a real Service before any route is registered — pg
@@ -637,6 +652,9 @@ func serve(c *cli.Context) error {
 
 	// Setting direct-URL stream routes (player page, proxy, import status).
 	urlstream.RegisterHandler(r, tm, urlSrc, pg)
+
+	// Setting Jellyfin routes (list, player page, Range proxy; administrator only).
+	wjf.RegisterHandler(r, tm, jf)
 
 	// Setting Discover Watchlist
 	discover_watchlist.RegisterHandler(r, pg, en)

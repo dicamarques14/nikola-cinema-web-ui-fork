@@ -18,6 +18,8 @@ const userSettingsContextKey = "web.user_settings"
 
 const vaultEnabledContextKey = "web.vault_enabled"
 
+const jellyfinEnabledContextKey = "web.jellyfin_enabled"
+
 const unreadNotificationsContextKey = "web.unread_notifications"
 
 // SetUnreadNotifications records the signed-in user's unread notification
@@ -47,6 +49,18 @@ func unreadNotifications(c *gin.Context) int {
 // the vault API client exists, so an ungated link is a 404.
 func SetVaultEnabled(c *gin.Context, enabled bool) {
 	c.Set(vaultEnabledContextKey, enabled)
+}
+
+// SetJellyfinEnabled records whether the navbar shows the Jellyfin link: the
+// service is configured and the viewer may use it.
+func SetJellyfinEnabled(c *gin.Context, enabled bool) {
+	c.Set(jellyfinEnabledContextKey, enabled)
+}
+
+func jellyfinEnabled(c *gin.Context) bool {
+	b, _ := c.Get(jellyfinEnabledContextKey)
+	v, _ := b.(bool)
+	return v
 }
 
 // vaultEnabled defaults to false when nothing set it, so a caller that forgets
@@ -103,6 +117,8 @@ type Context struct {
 	OpenInstance bool
 	// Vault reports whether the vault service is configured.
 	Vault bool
+	// Jellyfin reports whether the navbar links to /jellyfin.
+	Jellyfin bool
 	// UnreadNotifications is the signed-in user's unread notification
 	// count, populated by the middleware in serve.go. Zero for anonymous
 	// requests and for any request that middleware did not run on.
@@ -177,6 +193,7 @@ func NewContext(c *gin.Context) *Context {
 		SuggestLang:         suggest,
 		OpenInstance:        auth.IsOpenInstance(c),
 		Vault:               vaultEnabled(c),
+		Jellyfin:            jellyfinEnabled(c),
 		UnreadNotifications: unreadNotifications(c),
 		ginCtx:              c,
 	}

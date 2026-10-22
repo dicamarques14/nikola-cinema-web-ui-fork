@@ -1,0 +1,33 @@
+{{ define "title" }}Jellyfin{{ end }}
+{{ define "main" }}
+{{ with .Data }}
+{{/* The Jellyfin library (services/jellyfin): each entry opens /jellyfin/:id,
+     which plays the original file through movi-player. */}}
+<section class="min-h-screen pt-20 sm:pt-24 pb-10 px-3 sm:px-6">
+  <div class="max-w-[1100px] mx-auto">
+    <h1 class="text-xl font-bold mb-4">Jellyfin</h1>
+    <form method="get" action="/jellyfin" class="mb-4 flex gap-2" role="search">
+      <input type="search" name="q" value="{{ .Search }}" placeholder="Search the library" class="input input-bordered w-full max-w-md" autofocus>
+      <button class="btn btn-primary" type="submit">Search</button>
+    </form>
+    {{ if .Error }}
+      <p class="text-error">Jellyfin is not reachable: {{ .Error }}</p>
+    {{ else if not .Items }}
+      <p class="text-w-sub">Nothing found.</p>
+    {{ else }}
+      <ul class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+        {{ range .Items }}
+        <li>
+          <a href="/jellyfin/{{ .ID }}" class="block group">
+            <img src="/jellyfin/{{ .ID }}/poster" alt="" loading="lazy" class="w-full aspect-[2/3] object-cover rounded-lg bg-base-200">
+            <div class="mt-2 text-sm font-semibold truncate group-hover:underline" title="{{ .Title }}">{{ .Title }}</div>
+            <div class="text-xs text-w-muted">{{ if .Year }}{{ .Year }} · {{ end }}{{ .Container }}{{ if .VideoCodec }} · {{ .VideoCodec }}{{ end }}</div>
+          </a>
+        </li>
+        {{ end }}
+      </ul>
+    {{ end }}
+  </div>
+</section>
+{{ end }}
+{{ end }}
