@@ -2,13 +2,23 @@
 {{ define "main" }}
 {{ with .Data }}
 {{/* One Jellyfin file, played through /jellyfin/:id/stream (a Range proxy
-     that adds the API key). movi-player's own menus stand in for the picker:
-     no Vault, no share. */}}
-<section class="min-h-screen pt-20 sm:pt-24 pb-10 px-3 sm:px-6" id="jellyfin-player">
+     that adds the API key). The subtitle picker is the torrent player's
+     (#subtitles, track-dialog.js) with Jellyfin's text tracks as side-loaded
+     chips (/jellyfin/:id/subtitles/N.vtt); no audio row, no uploads, no
+     translation, and no PUT of the choice (data-persist="false"). Prev/next,
+     the end-of-episode prompt and the resume point are jellyfin.js. Big
+     targets: this page is also used from a car's browser. */}}
+<section class="min-h-screen pt-20 sm:pt-24 pb-10 px-3 sm:px-6" id="jellyfin-player"
+         data-item-id="{{ .Item.ID }}"{{ with .Next }} data-next-href="/jellyfin/{{ .ID }}" data-next-title="{{ with .Code }}{{ . }} · {{ end }}{{ .Name }}"{{ end }}>
   <div class="max-w-[1100px] mx-auto">
-    <div class="mb-3 flex items-center gap-3">
-      {{ if .Item.SeriesID }}<a href="/jellyfin/show/{{ .Item.SeriesID }}" class="btn btn-ghost">&larr; {{ .Item.Series }}</a>{{ else }}<a href="/jellyfin" class="btn btn-ghost">&larr; Library</a>{{ end }}
-      <h1 class="text-lg sm:text-xl font-bold truncate" title="{{ .Title }}">{{ .Title }}</h1>
+    <div class="mb-3 flex flex-wrap items-center gap-2">
+      {{ if .Item.SeriesID }}<a href="/jellyfin/show/{{ .Item.SeriesID }}" class="btn btn-ghost btn-lg min-h-14 px-4">&larr; {{ .Item.Series }}</a>{{ else }}<a href="/jellyfin" class="btn btn-ghost btn-lg min-h-14 px-4">&larr; Library</a>{{ end }}
+      {{ if or .Prev .Next }}
+      <nav class="ml-auto flex gap-2" aria-label="Episodes">
+        {{ with .Prev }}<a href="/jellyfin/{{ .ID }}" class="btn btn-lg min-h-14 px-5 jellyfin-prev" title="{{ .Name }}">&#9664;<span class="hidden sm:inline">{{ with .Code }}{{ . }}{{ else }}Previous{{ end }}</span></a>{{ else }}<span class="btn btn-lg min-h-14 px-5 btn-disabled" aria-hidden="true">&#9664;</span>{{ end }}
+        {{ with .Next }}<a href="/jellyfin/{{ .ID }}" class="btn btn-lg min-h-14 px-5 btn-primary jellyfin-next" title="{{ .Name }}"><span class="hidden sm:inline">{{ with .Code }}{{ . }}{{ else }}Next{{ end }}</span>&#9654;</a>{{ else }}<span class="btn btn-lg min-h-14 px-5 btn-disabled" aria-hidden="true">&#9654;</span>{{ end }}
+      </nav>
+      {{ end }}
     </div>
     <div class="relative">
       <video class="player"
@@ -20,9 +30,83 @@
              playsinline>
         <source src="{{ .StreamURL }}">
       </video>
+      {{/* The end of an episode: the next one in 10 s unless cancelled
+           (jellyfin.js), over the picture. */}}
+      {{ with .Next }}
+      <div id="jellyfin-up-next" class="absolute right-3 bottom-20 z-30 max-w-sm rounded-xl bg-base-100/95 border border-w-line shadow-xl p-4" hidden>
+        <p class="text-sm text-w-muted">Up next in <span class="jellyfin-countdown">10</span> s</p>
+        <p class="font-semibold mt-1 truncate">{{ with .Code }}{{ . }} · {{ end }}{{ .Name }}</p>
+        <div class="mt-3 flex gap-2">
+          <a href="/jellyfin/{{ .ID }}" class="btn btn-primary btn-lg min-h-14 flex-1">Play now</a>
+          <button type="button" class="btn btn-ghost btn-lg min-h-14 jellyfin-up-next-cancel">Cancel</button>
+        </div>
+      </div>
+      {{ end }}
     </div>
-    <p class="mt-2 text-xs text-w-muted">{{ .Item.Container }}{{ if .Item.VideoCodec }} · {{ .Item.VideoCodec }}{{ end }}{{ if .Item.AudioCodec }} · {{ .Item.AudioCodec }}{{ end }}</p>
+
+    <div class="relative mt-5 rounded-2xl overflow-hidden bg-base-200">
+      {{ if .Item.ImageID }}<div class="absolute inset-0 bg-cover bg-center opacity-25 blur-2xl scale-110" style="background-image:url('/jellyfin/{{ .Item.ImageID }}/poster')" aria-hidden="true"></div>{{ end }}
+      <div class="relative flex gap-4 sm:gap-6 p-4 sm:p-6">
+        {{ if .Item.ImageID }}<img src="/jellyfin/{{ .Item.ImageID }}/poster" alt="" class="hidden sm:block w-32 md:w-40 aspect-[2/3] object-cover rounded-lg shadow-lg shrink-0">{{ end }}
+        <div class="min-w-0">
+          {{ if eq .Item.Type "Episode" }}
+            {{ if .Item.SeriesID }}<a href="/jellyfin/show/{{ .Item.SeriesID }}" class="text-sm sm:text-base text-w-sub hover:underline">{{ .Item.Series }}</a>{{ end }}
+            <h1 class="text-xl sm:text-3xl font-bold mt-1">{{ with .Item.Code }}<span class="text-w-muted font-mono font-semibold mr-2">{{ . }}</span>{{ end }}{{ .Item.Name }}</h1>
+          {{ else }}
+            <h1 class="text-xl sm:text-3xl font-bold">{{ .Item.Name }}{{ if .Item.Year }} <span class="text-w-muted font-normal">({{ .Item.Year }})</span>{{ end }}</h1>
+          {{ end }}
+          <p class="mt-2 text-sm text-w-muted">
+            {{- if .Item.SeasonName }}{{ .Item.SeasonName }} · {{ end -}}
+            {{- if .Item.Runtime }}{{ .Item.Minutes }} min · {{ end -}}
+            {{ .Item.Container }}{{ if .Item.VideoCodec }} · {{ .Item.VideoCodec }}{{ end }}{{ if .Item.AudioCodec }} · {{ .Item.AudioCodec }}{{ end }}
+          </p>
+          {{ if .Item.Overview }}<p class="mt-3 text-sm sm:text-base leading-relaxed text-w-sub max-w-prose">{{ .Item.Overview }}</p>{{ end }}
+          <p class="mt-3 text-xs text-w-muted jellyfin-resume-note" hidden></p>
+        </div>
+      </div>
+    </div>
   </div>
+
+  {{/* The picker. Same ids and classes as action/stream_video.html so
+       track-dialog.js and Player.jsx drive it unchanged: a chip is a
+       side-loaded track the bridge fetches, parses and draws
+       (movi-tracks.js). The hidden "none" carrier is what the switch
+       activates for "off". */}}
+  {{ $start := .Start }}
+  <dialog class="modal" id="subtitles" data-persist="false" data-subtitles-off="{{ if $start }}false{{ else }}true{{ end }}">
+    <div class="modal-box w-full sm:w-11/12 max-w-5xl">
+      <div class="flex items-center gap-3 mb-3">
+        <h3 class="font-bold text-lg">Subtitles</h3>
+        <label class="flex items-center cursor-pointer shrink-0">
+          <span class="sr-only">Subtitles</span>
+          <input type="checkbox" id="subtitles-toggle" class="toggle toggle-soft toggle-lg"{{ if $start }} checked{{ end }}>
+        </label>
+      </div>
+      {{ if not .Subtitles }}<p class="text-sm text-w-sub mb-3">This file has no text subtitles.</p>{{ end }}
+      <div id="subtitle-tracks" class="flex flex-wrap gap-2{{ if not $start }} picker-off{{ end }}" role="radiogroup" aria-label="Subtitles">
+        <button type="button" id="subtitle-none" class="subtitle" hidden aria-hidden="true" tabindex="-1"
+                data-id="none" data-provider="Jellyfin" data-srclang="" data-lang="und"{{ if not $start }} data-default="true"{{ end }}></button>
+        {{ range .Subtitles }}
+        {{ $on := eq .ID $start }}
+        <button type="button" role="radio" aria-checked="{{ if $on }}true{{ else }}false{{ end }}"
+                data-id="{{ .ID }}" data-provider="Jellyfin" data-src="{{ .Src }}" data-label="{{ .Label }}" data-srclang="{{ .Language }}" data-lang="{{ .Language }}"
+                {{ if .Forced }}data-forced="true" {{ end }}{{ if $on }}data-default="true" {{ end }}
+                class="subtitle track-chip min-h-12 px-4{{ if $on }} track-chip-active{{ end }}">
+          <svg class="chip-check w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" aria-hidden="true"{{ if not $on }} hidden{{ end }}><polyline points="20 6 9 17 4 12"/></svg>
+          {{ if .External }}<span class="chip-origin badge badge-xs font-mono font-semibold tracking-wider bg-base-300/80 border-w-line/50 text-w-sub" title="External file">EXT</span>{{ end }}
+          <span class="max-w-[14rem] truncate" title="{{ .Label }}">{{ .Label }}</span>
+          {{ if .Forced }}<span class="badge badge-xs border-w-line/50 text-w-muted uppercase tracking-wider">forced</span>{{ end }}
+          {{ if .Default }}<span class="badge badge-xs border-w-line/50 text-w-muted uppercase tracking-wider">default</span>{{ end }}
+        </button>
+        {{ end }}
+      </div>
+      {{ with .ImageSubtitles }}<p class="mt-3 text-xs text-w-muted">{{ . }} image subtitle track{{ if ne . 1 }}s{{ end }} (PGS/VobSub) can't be shown in the browser player.</p>{{ end }}
+      <div class="modal-action mt-5 pt-4 border-t border-w-line">
+        <form method="dialog" class="w-full sm:w-auto sm:ml-auto"><button class="btn btn-lg min-h-14 w-full sm:w-auto">Close</button></form>
+      </div>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button tabindex="-1" aria-hidden="true">close</button></form>
+  </dialog>
   {{ "player.css" | asset }}
   {{ "jellyfin.js" | asset }}
 </section>

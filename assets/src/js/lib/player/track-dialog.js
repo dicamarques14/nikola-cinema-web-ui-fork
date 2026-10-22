@@ -585,7 +585,9 @@ export function markTrack(container, el, type, persist = true) {
     // has just named.
     refreshMarks(s);
 
-    if (!persist) return;
+    // A dialog with no session behind it (the Jellyfin player) keeps the
+    // pick on the page: there is no resource to write it to.
+    if (!persist || s.getAttribute('data-persist') === 'false') return;
     return persistTrackChoice(type, {
         id: el.getAttribute('data-id'),
         resourceID: s.getAttribute('data-resource-id'),

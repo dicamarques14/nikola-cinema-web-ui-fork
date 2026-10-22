@@ -7,6 +7,7 @@ package jellyfin
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -54,6 +55,9 @@ type Service struct {
 	key    string
 	api    *http.Client
 	stream *http.Client
+	// subs reads subtitle files: an embedded track is extracted from the
+	// whole file on first read, which can outlast api's timeout.
+	subs *http.Client
 }
 
 func New(c *cli.Context) (*Service, error) {
@@ -81,6 +85,7 @@ func New(c *cli.Context) (*Service, error) {
 		return nil
 	}
 	s.api = &http.Client{Timeout: 20 * time.Second, CheckRedirect: redirect}
+	s.subs = &http.Client{Timeout: 3 * time.Minute, CheckRedirect: redirect}
 	// No overall timeout: a film streams for hours. A hung server is cut
 	// off at the headers.
 	s.stream = &http.Client{
@@ -112,6 +117,20 @@ type Item struct {
 	// ImageID is the item whose Primary image stands for this one: its own,
 	// else its series' (an episode without a still), else none.
 	ImageID string
+	// Overview is the synopsis, when the query asked for it.
+	Overview string
+	// MediaSourceID is the first version's id (the one Stream plays).
+	MediaSourceID string
+	// Subtitles are the first version's subtitle streams, in Jellyfin order.
+	Subtitles []Subtitle
+}
+
+// Code is "S01E02" for an episode, "" otherwise.
+func (i Item) Code() string {
+	if i.Type != "Episode" || i.Episode == 0 {
+		return ""
+	}
+	return fmt.Sprintf("S%02dE%02d", i.Season, i.Episode)
 }
 
 // Title is the name with its series and numbering when it is an episode.
@@ -151,14 +170,26 @@ type apiItem struct {
 	IndexNumber           int               `json:"IndexNumber"`
 	RunTimeTicks          int64             `json:"RunTimeTicks"`
 	Container             string            `json:"Container"`
+	Overview              string            `json:"Overview"`
 	MediaSources          []struct {
-		Container    string `json:"Container"`
-		Size         int64  `json:"Size"`
-		MediaStreams []struct {
-			Type  string `json:"Type"`
-			Codec string `json:"Codec"`
-		} `json:"MediaStreams"`
+		ID           string      `json:"Id"`
+		Container    string      `json:"Container"`
+		Size         int64       `json:"Size"`
+		MediaStreams []apiStream `json:"MediaStreams"`
 	} `json:"MediaSources"`
+}
+
+type apiStream struct {
+	Type                 string `json:"Type"`
+	Codec                string `json:"Codec"`
+	Index                int    `json:"Index"`
+	Language             string `json:"Language"`
+	Title                string `json:"Title"`
+	DisplayTitle         string `json:"DisplayTitle"`
+	IsDefault            bool   `json:"IsDefault"`
+	IsForced             bool   `json:"IsForced"`
+	IsExternal           bool   `json:"IsExternal"`
+	IsTextSubtitleStream bool   `json:"IsTextSubtitleStream"`
 }
 
 func (a apiItem) item() Item {
@@ -166,8 +197,9 @@ func (a apiItem) item() Item {
 		ID: a.ID, Name: a.Name, Type: a.Type, Series: a.SeriesName, SeriesID: a.SeriesID,
 		SeasonName: a.SeasonName, Year: a.ProductionYear,
 		Season: a.ParentIndexNumber, Episode: a.IndexNumber, Container: a.Container,
-		Runtime: time.Duration(a.RunTimeTicks) * 100, // ticks are 100 ns
-		Virtual: a.LocationType == "Virtual",
+		Runtime:  time.Duration(a.RunTimeTicks) * 100, // ticks are 100 ns
+		Virtual:  a.LocationType == "Virtual",
+		Overview: a.Overview,
 	}
 	switch {
 	case a.ImageTags["Primary"] != "":
@@ -178,6 +210,9 @@ func (a apiItem) item() Item {
 	if len(a.MediaSources) > 0 {
 		ms := a.MediaSources[0]
 		it.Size = ms.Size
+		if ValidID(ms.ID) {
+			it.MediaSourceID = ms.ID
+		}
 		if ms.Container != "" {
 			it.Container = ms.Container
 		}
@@ -187,6 +222,8 @@ func (a apiItem) item() Item {
 				it.VideoCodec = s.Codec
 			case s.Type == "Audio" && it.AudioCodec == "":
 				it.AudioCodec = s.Codec
+			case s.Type == "Subtitle":
+				it.Subtitles = append(it.Subtitles, s.subtitle())
 			}
 		}
 	}
@@ -374,7 +411,7 @@ func GroupSeasons(eps []Item) []Season {
 func (s *Service) Item(ctx context.Context, id string) (*Item, error) {
 	q := url.Values{}
 	q.Set("Ids", id)
-	q.Set("Fields", "MediaSources,ProductionYear")
+	q.Set("Fields", "MediaSources,ProductionYear,Overview")
 	var out struct {
 		Items []apiItem `json:"Items"`
 	}

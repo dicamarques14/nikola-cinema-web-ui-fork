@@ -4,6 +4,8 @@ package jellyfin
 
 import (
 	"net/http"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -37,6 +39,7 @@ func RegisterHandler(r *gin.Engine, tm *template.Manager[*web.Context], svc *jel
 	g.GET("/:id/stream", h.stream)
 	g.HEAD("/:id/stream", h.stream)
 	g.GET("/:id/poster", h.poster)
+	g.GET("/:id/subtitles/:file", h.subtitle)
 }
 
 type listData struct {
@@ -102,6 +105,22 @@ type playData struct {
 	Item      *jellyfin.Item
 	Title     string
 	StreamURL string
+	// Prev and Next are the neighbouring episodes on disk, nil at either end
+	// and for a movie.
+	Prev *jellyfin.Item
+	Next *jellyfin.Item
+	// Subtitles are the text tracks the picker offers, Start the one shown
+	// when the page opens (nil: none), ImageSubtitles how many could not be.
+	Subtitles      []subtitleChip
+	Start          string
+	ImageSubtitles int
+}
+
+// subtitleChip is a text subtitle as the picker renders it.
+type subtitleChip struct {
+	jellyfin.Subtitle
+	ID  string
+	Src string
 }
 
 func (h *Handler) play(c *gin.Context) {
@@ -126,11 +145,62 @@ func (h *Handler) play(c *gin.Context) {
 		c.AbortWithStatus(http.StatusNotFound)
 		return
 	}
-	h.tb.Build("jellyfin/play").HTML(http.StatusOK, web.NewContext(c).WithData(&playData{
-		Item:      it,
-		Title:     it.Title(),
-		StreamURL: "/jellyfin/" + id + "/stream",
-	}))
+	d := &playData{
+		Item:           it,
+		Title:          it.Title(),
+		StreamURL:      "/jellyfin/" + id + "/stream",
+		ImageSubtitles: it.ImageSubtitles(),
+	}
+	for _, s := range it.TextSubtitles() {
+		d.Subtitles = append(d.Subtitles, subtitleChip{
+			Subtitle: s,
+			ID:       s.ID(),
+			Src:      "/jellyfin/" + id + "/subtitles/" + strconv.Itoa(s.Index) + ".vtt",
+		})
+	}
+	if s, ok := it.StartSubtitle(); ok {
+		d.Start = s.ID()
+	}
+	if it.Type == "Episode" && jellyfin.ValidID(it.SeriesID) {
+		// The way on is a nicety: a failed listing leaves the buttons out.
+		if eps, err := h.svc.Episodes(c.Request.Context(), it.SeriesID); err != nil {
+			log.WithError(err).Warn("jellyfin: failed to list the neighbouring episodes")
+		} else {
+			d.Prev, d.Next = jellyfin.Neighbours(eps, it.ID)
+		}
+	}
+	h.tb.Build("jellyfin/play").HTML(http.StatusOK, web.NewContext(c).WithData(d))
+}
+
+// subtitleFile is the route's last segment: a stream index and ".vtt".
+var subtitleFile = regexp.MustCompile(`^([0-9]{1,4})\.vtt$`)
+
+// subtitle answers one text subtitle track of an item as WebVTT. The index
+// must be a text track of the item's first version (what the player plays),
+// so nothing but a known stream reaches Jellyfin.
+func (h *Handler) subtitle(c *gin.Context) {
+	id := c.Param("id")
+	m := subtitleFile.FindStringSubmatch(c.Param("file"))
+	if !jellyfin.ValidID(id) || m == nil {
+		c.AbortWithStatus(http.StatusNotFound)
+		return
+	}
+	index, _ := strconv.Atoi(m[1])
+	it, err := h.svc.Item(c.Request.Context(), id)
+	if err != nil {
+		log.WithError(err).Warn("jellyfin: failed to read an item")
+		c.AbortWithStatus(http.StatusBadGateway)
+		return
+	}
+	if it == nil || it.MediaSourceID == "" {
+		c.AbortWithStatus(http.StatusNotFound)
+		return
+	}
+	if _, ok := it.Subtitle(index); !ok {
+		c.AbortWithStatus(http.StatusNotFound)
+		return
+	}
+	h.svc.Subtitle(c.Writer, c.Request, id, it.MediaSourceID, index)
 }
 
 func (h *Handler) stream(c *gin.Context) {

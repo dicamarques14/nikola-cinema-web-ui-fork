@@ -74,3 +74,59 @@ func TestJellyfinShowRendersSeasons(t *testing.T) {
 		t.Error("episode does not link to the player")
 	}
 }
+
+// The player page: the episode header, prev/next, and the subtitle picker
+// with Jellyfin's text tracks as side-loaded chips the track bridge drives.
+func TestJellyfinPlayRendersHeaderNavAndSubtitles(t *testing.T) {
+	type chip struct {
+		jellyfin.Subtitle
+		ID, Src string
+	}
+	ep := &jellyfin.Item{ID: jfEp, Name: "The Pony Remark", Type: "Episode", Series: "Seinfeld", SeriesID: jfShow, Season: 2, Episode: 2, Overview: "Jerry and a pony.", ImageID: jfEp}
+	prev := &jellyfin.Item{ID: jfShow, Name: "Pilot", Type: "Episode", Season: 2, Episode: 1}
+	next := &jellyfin.Item{ID: "abcdefabcdefabcdefabcdefabcdefab", Name: "The Stake Out", Type: "Episode", Season: 2, Episode: 3}
+	data := struct {
+		Item           *jellyfin.Item
+		Title          string
+		StreamURL      string
+		Prev, Next     *jellyfin.Item
+		Subtitles      []chip
+		Start          string
+		ImageSubtitles int
+	}{
+		Item: ep, Title: "Seinfeld - The Pony Remark", StreamURL: "/jellyfin/" + jfEp + "/stream",
+		Prev: prev, Next: next,
+		Subtitles: []chip{
+			{jellyfin.Subtitle{Index: 0, Label: "Portuguese", Language: "por", Text: true, External: true}, "jf-0", "/jellyfin/" + jfEp + "/subtitles/0.vtt"},
+			{jellyfin.Subtitle{Index: 5, Label: "English", Language: "eng", Text: true, Default: true}, "jf-5", "/jellyfin/" + jfEp + "/subtitles/5.vtt"},
+		},
+		Start: "jf-5", ImageSubtitles: 2,
+	}
+	out := renderJellyfin(t, "play.html", data)
+	for _, want := range []string{
+		"Seinfeld", "S02E02", "The Pony Remark", "Jerry and a pony.",
+		`href="/jellyfin/show/` + jfShow + `"`,
+		`href="/jellyfin/` + jfShow + `"`, // prev
+		`data-next-href="/jellyfin/abcdefabcdefabcdefabcdefabcdefab"`,
+		`id="subtitles" data-persist="false" data-subtitles-off="false"`,
+		`data-id="jf-5" data-provider="Jellyfin" data-src="/jellyfin/` + jfEp + `/subtitles/5.vtt"`,
+		"2 image subtitle tracks",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("play page lacks %q", want)
+		}
+	}
+	if n := strings.Count(out, `data-default="true"`); n != 1 {
+		t.Errorf("%d default subtitle chips, want exactly 1 (jf-5)", n)
+	}
+	if !strings.Contains(out, `data-label="English" data-srclang="eng" data-lang="eng"`) {
+		t.Error("chip label/lang attributes missing")
+	}
+
+	// No start track: the hidden "none" carrier is the default, picker off.
+	data.Start = ""
+	out = renderJellyfin(t, "play.html", data)
+	if !strings.Contains(out, `data-subtitles-off="true"`) || !strings.Contains(out, `data-lang="und" data-default="true"`) {
+		t.Error("with no start track the picker must open off on the none carrier")
+	}
+}
