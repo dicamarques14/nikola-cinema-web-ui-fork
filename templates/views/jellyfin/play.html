@@ -6,10 +6,11 @@
      (#subtitles, track-dialog.js) with Jellyfin's text tracks as side-loaded
      chips (/jellyfin/:id/subtitles/N.vtt); no audio row, no uploads, no
      translation, and no PUT of the choice (data-persist="false"). Prev/next,
-     the end-of-episode prompt and the resume point are jellyfin.js. Big
+     the end-of-episode prompt and the addon subtitles (/jellyfin/:id/addon-subtitles)
+     are jellyfin.js; the resume point is the player's (data-resource-id). Big
      targets: this page is also used from a car's browser. */}}
 <section class="min-h-screen pt-20 sm:pt-24 pb-10 px-3 sm:px-6" id="jellyfin-player"
-         data-item-id="{{ .Item.ID }}"{{ with .Next }} data-next-href="/jellyfin/{{ .ID }}" data-next-title="{{ with .Code }}{{ . }} · {{ end }}{{ .Name }}"{{ end }}>
+         data-item-id="{{ .Item.ID }}" data-addon-subtitles="/jellyfin/{{ .Item.ID }}/addon-subtitles"{{ with .Next }} data-next-href="/jellyfin/{{ .ID }}" data-next-title="{{ with .Code }}{{ . }} · {{ end }}{{ .Name }}"{{ end }}>
   <div class="max-w-[1100px] mx-auto">
     <div class="mb-3 flex flex-wrap items-center gap-2">
       {{ if .Item.SeriesID }}<a href="/jellyfin/show/{{ .Item.SeriesID }}" class="btn btn-ghost btn-lg min-h-14 px-4">&larr; {{ .Item.Series }}</a>{{ else }}<a href="/jellyfin" class="btn btn-ghost btn-lg min-h-14 px-4">&larr; Library</a>{{ end }}
@@ -22,6 +23,8 @@
     </div>
     <div class="relative">
       <video class="player"
+             data-resource-id="jellyfin"
+             data-path="{{ .Item.ID }}"
              crossorigin="anonymous"
              preload="auto"
              data-settings='{"features":{"share":false,"embed":false}}'
@@ -61,7 +64,6 @@
             {{ .Item.Container }}{{ if .Item.VideoCodec }} · {{ .Item.VideoCodec }}{{ end }}{{ if .Item.AudioCodec }} · {{ .Item.AudioCodec }}{{ end }}
           </p>
           {{ if .Item.Overview }}<p class="mt-3 text-sm sm:text-base leading-relaxed text-w-sub max-w-prose">{{ .Item.Overview }}</p>{{ end }}
-          <p class="mt-3 text-xs text-w-muted jellyfin-resume-note" hidden></p>
         </div>
       </div>
     </div>
@@ -106,7 +108,7 @@
           <input type="checkbox" id="subtitles-toggle" class="toggle toggle-soft toggle-lg"{{ if $start }} checked{{ end }}>
         </label>
       </div>
-      {{ if not .Subtitles }}<p class="text-sm text-w-sub mb-3">This file has no text subtitles.</p>{{ end }}
+      {{ if not .Subtitles }}<p class="text-sm text-w-sub mb-3" id="jellyfin-no-subtitles">This file has no text subtitles.</p>{{ end }}
       <div id="subtitle-tracks" class="flex flex-wrap gap-2{{ if not $start }} picker-off{{ end }}" role="radiogroup" aria-label="Subtitles">
         <button type="button" id="subtitle-none" class="subtitle" hidden aria-hidden="true" tabindex="-1"
                 data-id="none" data-provider="Jellyfin" data-srclang="" data-lang="und"{{ if not $start }} data-default="true"{{ end }}></button>

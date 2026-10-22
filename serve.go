@@ -654,7 +654,7 @@ func serve(c *cli.Context) error {
 	urlstream.RegisterHandler(r, tm, urlSrc, pg)
 
 	// Setting Jellyfin routes (list, player page, Range proxy; administrator only).
-	wjf.RegisterHandler(r, tm, jf)
+	wjf.RegisterHandler(r, tm, jf, pg, streamPrefs, stremioAddonCl)
 
 	// Setting Discover Watchlist
 	discover_watchlist.RegisterHandler(r, pg, en)

@@ -125,6 +125,10 @@ type Item struct {
 	Subtitles []Subtitle
 	// Audio are the first version's audio tracks, in file order.
 	Audio []Audio
+	// Imdb and Tmdb are the entry's own provider ids, when Jellyfin has them
+	// (an episode's are its own, rarely set: see the series').
+	Imdb string
+	Tmdb string
 }
 
 // Code is "S01E02" for an episode, "" otherwise.
@@ -173,6 +177,7 @@ type apiItem struct {
 	RunTimeTicks          int64             `json:"RunTimeTicks"`
 	Container             string            `json:"Container"`
 	Overview              string            `json:"Overview"`
+	ProviderIds           map[string]string `json:"ProviderIds"`
 	MediaSources          []struct {
 		ID           string      `json:"Id"`
 		Container    string      `json:"Container"`
@@ -204,6 +209,8 @@ func (a apiItem) item() Item {
 		Runtime:  time.Duration(a.RunTimeTicks) * 100, // ticks are 100 ns
 		Virtual:  a.LocationType == "Virtual",
 		Overview: a.Overview,
+		Imdb:     providerID(a.ProviderIds, "Imdb"),
+		Tmdb:     providerID(a.ProviderIds, "Tmdb"),
 	}
 	switch {
 	case a.ImageTags["Primary"] != "":
@@ -419,7 +426,7 @@ func GroupSeasons(eps []Item) []Season {
 func (s *Service) Item(ctx context.Context, id string) (*Item, error) {
 	q := url.Values{}
 	q.Set("Ids", id)
-	q.Set("Fields", "MediaSources,ProductionYear,Overview")
+	q.Set("Fields", "MediaSources,ProductionYear,Overview,ProviderIds")
 	var out struct {
 		Items []apiItem `json:"Items"`
 	}
@@ -524,4 +531,19 @@ func (s *Service) pass(w http.ResponseWriter, r *http.Request, path string, q ur
 		return
 	}
 	_, _ = io.Copy(w, res.Body)
+}
+
+// providerID is ids[key] when it is a plain id: it is later put into an addon
+// URL, so nothing but letters, digits and "-" passes.
+func providerID(ids map[string]string, key string) string {
+	v := strings.TrimSpace(ids[key])
+	if v == "" || len(v) > 32 {
+		return ""
+	}
+	for _, r := range v {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-') {
+			return ""
+		}
+	}
+	return v
 }

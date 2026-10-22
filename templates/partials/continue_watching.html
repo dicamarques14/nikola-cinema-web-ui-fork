@@ -13,7 +13,8 @@
         <!-- Card Ribbon -->
         <div class="flex gap-4 overflow-x-auto pb-4 scrollbar-none">
             {{ range .Data }}
-            <a href="{{ langPath $.Ctx.Lang (printf "/%s" .ResourceID) }}?file={{ .Path }}#action=stream" data-async-target="main" data-umami-event="continue-watching-click" class="shrink-0 w-[140px] group cursor-pointer">
+            {{/* Href: an entry that is not a torrent (a Jellyfin item), whose page is a plain load. */}}
+            <a {{ if .Href }}href="{{ .Href }}"{{ else }}href="{{ langPath $.Ctx.Lang (printf "/%s" .ResourceID) }}?file={{ .Path }}#action=stream" data-async-target="main"{{ end }} data-umami-event="continue-watching-click" class="shrink-0 w-[140px] group cursor-pointer">
                 <div class="relative aspect-[2/3] rounded-xl overflow-hidden border border-w-line group-hover:border-w-pink/30 group-hover:shadow-[0_0_20px_rgba(232,67,147,0.1)] transition-all duration-300">
                     <!-- Placeholder layer (always rendered). When the
                          poster endpoint returns a real image, the <img>
@@ -23,7 +24,7 @@
                         <div class="text-center font-bold text-sm p-2 text-w-purpleL/60 line-clamp-3">{{ .DisplayName }}</div>
                     </div>
                     <img class="absolute inset-0 w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                         src="{{ posterURL .ResourceID 240 .IsAdult $.Ctx }}" alt="{{ .DisplayName }}" loading="lazy"
+                         src="{{ if .Href }}{{ .Poster }}{{ else }}{{ posterURL .ResourceID 240 .IsAdult $.Ctx }}{{ end }}" alt="{{ .DisplayName }}" loading="lazy"
                          onerror="this.remove()" />
                     {{ if showAdultBadge .IsAdult $.Ctx }}
                     <div class="w-adult-badge absolute inset-0 grid place-items-center pointer-events-none" data-resource-id="{{ .ResourceID }}">

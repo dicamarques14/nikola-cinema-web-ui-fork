@@ -8,6 +8,7 @@ import (
 	cs "github.com/webtor-io/common-services"
 	"github.com/webtor-io/web-ui/models"
 	"github.com/webtor-io/web-ui/services/auth"
+	"github.com/webtor-io/web-ui/services/jellyfin"
 	"github.com/webtor-io/web-ui/services/user_video_status"
 )
 
@@ -59,6 +60,20 @@ func (h *Handler) updatePosition(c *gin.Context) {
 	db := h.pg.Get()
 	if db == nil {
 		c.Status(http.StatusServiceUnavailable)
+		return
+	}
+
+	if req.ResourceID == models.JellyfinResourceID {
+		if !jellyfinAllowed(c, req.Path) {
+			c.Status(http.StatusNotFound)
+			return
+		}
+		if err := models.UpsertJellyfinPosition(c.Request.Context(), db, user.ID, req.Path, req.Position, req.Duration, req.CreditsAt); err != nil {
+			_ = c.Error(err)
+			c.Status(http.StatusInternalServerError)
+			return
+		}
+		c.Status(http.StatusNoContent)
 		return
 	}
 
@@ -131,6 +146,25 @@ func (h *Handler) getPosition(c *gin.Context) {
 		return
 	}
 
+	if resourceID == models.JellyfinResourceID {
+		if !jellyfinAllowed(c, path) {
+			c.Status(http.StatusNotFound)
+			return
+		}
+		jw, err := models.GetJellyfinPosition(c.Request.Context(), db, user.ID, path)
+		if err != nil {
+			_ = c.Error(err)
+			c.Status(http.StatusInternalServerError)
+			return
+		}
+		if jw == nil || jw.Duration <= 0 {
+			c.Status(http.StatusNotFound)
+			return
+		}
+		c.JSON(http.StatusOK, &PositionResponse{Position: jw.Position, Duration: jw.Duration, Watched: jw.Watched})
+		return
+	}
+
 	wh, err := models.GetWatchPosition(c.Request.Context(), db, user.ID, resourceID, path)
 	if err != nil {
 		_ = c.Error(err)
@@ -148,4 +182,11 @@ func (h *Handler) getPosition(c *gin.Context) {
 		Duration: wh.Duration,
 		Watched:  wh.Watched,
 	})
+}
+
+// jellyfinAllowed: Jellyfin positions (resource_id "jellyfin", path = item
+// id) belong to the library the /jellyfin routes admit only the
+// administrator to; everyone else gets the same 404 those routes give.
+func jellyfinAllowed(c *gin.Context, itemID string) bool {
+	return auth.IsAdmin(c) && jellyfin.ValidID(itemID)
 }

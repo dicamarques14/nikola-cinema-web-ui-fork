@@ -3,16 +3,21 @@
 package jellyfin
 
 import (
+	"context"
 	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	log "github.com/sirupsen/logrus"
+	cs "github.com/webtor-io/common-services"
 
+	"github.com/webtor-io/web-ui/models"
 	"github.com/webtor-io/web-ui/services/auth"
 	"github.com/webtor-io/web-ui/services/jellyfin"
+	"github.com/webtor-io/web-ui/services/streamprefs"
 	"github.com/webtor-io/web-ui/services/template"
 	"github.com/webtor-io/web-ui/services/web"
 )
@@ -20,17 +25,21 @@ import (
 const listLimit = 200
 
 type Handler struct {
-	svc *jellyfin.Service
-	tb  template.Builder[*web.Context]
+	svc   *jellyfin.Service
+	tb    template.Builder[*web.Context]
+	pg    *cs.PG
+	addon *addonSubs
 }
 
 // RegisterHandler mounts /jellyfin for the administrator only. A nil svc (Jellyfin not
-// configured) mounts nothing.
-func RegisterHandler(r *gin.Engine, tm *template.Manager[*web.Context], svc *jellyfin.Service) {
+// configured) mounts nothing. pg keeps Continue watching (nil: no record);
+// addonClient is the Stremio addon client the addon subtitles go through
+// (nil: none).
+func RegisterHandler(r *gin.Engine, tm *template.Manager[*web.Context], svc *jellyfin.Service, pg *cs.PG, prefs *streamprefs.Service, addonClient *http.Client) {
 	if svc == nil {
 		return
 	}
-	h := &Handler{svc: svc, tb: tm.MustRegisterViews("jellyfin/*").WithLayout("main")}
+	h := &Handler{svc: svc, tb: tm.MustRegisterViews("jellyfin/*").WithLayout("main"), pg: pg, addon: newAddonSubs(pg, prefs, addonClient)}
 	g := r.Group("/jellyfin")
 	g.Use(auth.HasAuth, adminOnly)
 	g.GET("", h.index)
@@ -40,6 +49,8 @@ func RegisterHandler(r *gin.Engine, tm *template.Manager[*web.Context], svc *jel
 	g.HEAD("/:id/stream", h.stream)
 	g.GET("/:id/poster", h.poster)
 	g.GET("/:id/subtitles/:file", h.subtitle)
+	g.GET("/:id/addon-subtitles", h.addonList)
+	g.GET("/:id/addon-subtitles/:file", h.addonFileGet)
 }
 
 type listData struct {
@@ -186,7 +197,35 @@ func (h *Handler) play(c *gin.Context) {
 			d.Prev, d.Next = jellyfin.Neighbours(eps, it.ID)
 		}
 	}
+	h.record(c, it, d.Next)
 	h.tb.Build("jellyfin/play").HTML(http.StatusOK, web.NewContext(c).WithData(d))
+}
+
+// record notes what Continue watching shows for this item (the player
+// reports the position itself, PUT /watch/position). Best effort.
+func (h *Handler) record(c *gin.Context, it *jellyfin.Item, next *jellyfin.Item) {
+	user := auth.GetUserFromContext(c)
+	if h.pg == nil || !user.HasAuth() {
+		return
+	}
+	db := h.pg.Get()
+	if db == nil {
+		return
+	}
+	w := &models.JellyfinWatch{
+		UserID: user.ID, ItemID: it.ID, Title: it.Name, Series: it.Series, ImageID: it.ImageID,
+	}
+	if it.Type == "Episode" {
+		w.Code = it.Code()
+	}
+	if next != nil {
+		w.NextItemID, w.NextTitle, w.NextCode = next.ID, next.Name, next.Code()
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
+	defer cancel()
+	if err := models.TouchJellyfinItem(ctx, db, w); err != nil {
+		log.WithError(err).Warn("jellyfin: failed to record the item for Continue watching")
+	}
 }
 
 // subtitleFile is the route's last segment: a stream index and ".vtt".

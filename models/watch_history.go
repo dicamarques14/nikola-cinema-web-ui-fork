@@ -34,6 +34,10 @@ type WatchHistory struct {
 	PosterURL   string      `pg:"-"`
 	VideoID     string      `pg:"-"`
 	ContentType ContentType `pg:"-"`
+	// Href and Poster replace the torrent link and poster for entries that
+	// are not torrents (the Jellyfin library, models/jellyfin_watch.go).
+	Href   string `pg:"-"`
+	Poster string `pg:"-"`
 }
 
 // IsAdult returns the classification flag from the joined

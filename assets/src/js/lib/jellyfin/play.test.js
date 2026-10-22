@@ -1,29 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { resumeAt, loadPosition, savePosition, clock } from './play.js';
-
-function mem() {
-    const m = new Map();
-    return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, v), removeItem: (k) => m.delete(k), m };
-}
-
-test('resumeAt skips the first half minute and the last minute', () => {
-    assert.equal(resumeAt(10, 1500), 0);
-    assert.equal(resumeAt(600, 1500), 600);
-    assert.equal(resumeAt(1450, 1500), 0);
-    assert.equal(resumeAt(600, NaN), 600, 'unknown length still resumes');
-    assert.equal(resumeAt('x', 1500), 0);
-});
-
-test('a position is kept per item and forgotten near the end', () => {
-    const s = mem();
-    savePosition('a', 612.7, 1500, s);
-    assert.equal(loadPosition('a', s), 612);
-    assert.equal(loadPosition('b', s), 0);
-    savePosition('a', 1490, 1500, s);
-    assert.equal(loadPosition('a', s), 0);
-    assert.equal(s.m.size, 0);
-});
+import { clock } from './play.js';
 
 test('clock reads m:ss and h:mm:ss', () => {
     assert.equal(clock(65), '1:05');
@@ -66,4 +43,35 @@ test('wireAudio re-maps chips and flags a track the player refuses', async () =>
     undo();
     player.selectAudioTrack(2);
     assert.equal(chips[1].querySelectorAll('.badge').length, 1);
+});
+
+test('loadAddonSubtitles adds side-loaded chips and hides the "none" note', async () => {
+    const { JSDOM } = await import('jsdom');
+    const { loadAddonSubtitles } = await import('./play.js');
+    const dom = new JSDOM(`<section id="jellyfin-player" data-addon-subtitles="/jellyfin/abc/addon-subtitles">
+        <p id="jellyfin-no-subtitles">none</p><div id="subtitle-tracks"></div></section>`);
+    const root = dom.window.document.querySelector('#jellyfin-player');
+    let asked = '';
+    const n = await loadAddonSubtitles(root, { fetchJSON: async (u) => { asked = u; return [
+        { id: 'addon-0', src: '/jellyfin/abc/addon-subtitles/0.srt', label: 'Portuguese', lang: 'pt', source: 'OpenSubtitles v3' },
+        { id: 'addon-1', src: '/jellyfin/abc/addon-subtitles/1.srt', label: 'English <b>', lang: 'en', source: 'X' },
+    ]; } });
+    assert.equal(asked, '/jellyfin/abc/addon-subtitles');
+    assert.equal(n, 2);
+    const chips = root.querySelectorAll('#subtitle-tracks .subtitle');
+    assert.equal(chips.length, 2);
+    assert.equal(chips[0].getAttribute('data-provider'), 'Addon');
+    assert.equal(chips[0].getAttribute('data-src'), '/jellyfin/abc/addon-subtitles/0.srt');
+    assert.equal(chips[0].getAttribute('data-label'), 'Portuguese · OpenSubtitles v3');
+    assert.equal(chips[1].querySelector('b'), null, 'labels are text, not markup');
+    assert.equal(root.querySelector('#jellyfin-no-subtitles').hidden, true);
+});
+
+test('loadAddonSubtitles adds nothing when the server fails', async () => {
+    const { JSDOM } = await import('jsdom');
+    const { loadAddonSubtitles } = await import('./play.js');
+    const dom = new JSDOM(`<section data-addon-subtitles="/x"><div id="subtitle-tracks"></div></section>`);
+    const root = dom.window.document.querySelector('section');
+    assert.equal(await loadAddonSubtitles(root, { fetchJSON: async () => { throw new Error('502'); } }), 0);
+    assert.equal(root.querySelectorAll('.subtitle').length, 0);
 });

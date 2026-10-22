@@ -1,6 +1,6 @@
 // The Jellyfin player page (templates/views/jellyfin/play.html): movi-player
-// on /jellyfin/:id/stream with the audio and subtitle picker, plus the resume point and
-// the up-next prompt (lib/jellyfin/play.js).
+// on /jellyfin/:id/stream with the audio and subtitle picker, plus the up-next prompt and
+// the addon subtitles (lib/jellyfin/play.js).
 import av from '../lib/av';
 
 let undo = null;
@@ -11,9 +11,11 @@ av(async function () {
     await initPlayer(root);
     const video = root.querySelector('.player');
     if (video) {
-        const { wirePlayPage, wireAudio } = await import('../lib/jellyfin/play');
+        const { wirePlayPage, wireAudio, loadAddonSubtitles } = await import('../lib/jellyfin/play');
         const undoPage = wirePlayPage(root, video);
         const undoAudio = wireAudio(root, video);
+        // In the background: the addons can take seconds to answer.
+        loadAddonSubtitles(root);
         undo = () => { undoAudio(); undoPage(); };
     }
 }, async function () {

@@ -88,6 +88,12 @@ func Render(c *gin.Context, tb template.Builder[*web.Context], pg *cs.PG, status
 		if user.HasAuth() {
 			if db := pg.Get(); db != nil {
 				data.ContinueWatching, _ = models.GetRecentlyWatched(c.Request.Context(), db, user.ID, 10)
+				// The Jellyfin library is the administrator's (handlers/jellyfin).
+				if auth.IsAdmin(c) {
+					if jf, err := models.GetJellyfinContinueWatching(c.Request.Context(), db, user.ID, 10); err == nil {
+						data.ContinueWatching = models.MergeContinueWatching(data.ContinueWatching, jf, 10)
+					}
+				}
 			}
 		}
 	}
