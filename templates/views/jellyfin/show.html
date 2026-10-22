@@ -1,0 +1,50 @@
+{{ define "title" }}{{ .Data.Show.Name }}{{ end }}
+{{ define "main" }}
+{{ with .Data }}
+{{/* One show (handlers/jellyfin show): its episodes on disk, one
+     collapsible section per season, specials last. */}}
+<section class="min-h-screen pt-20 sm:pt-24 pb-10 px-3 sm:px-6">
+  <div class="max-w-[1100px] mx-auto">
+    <a href="/jellyfin" class="btn btn-ghost mb-3">&larr; Library</a>
+    <div class="flex gap-4 items-start mb-6">
+      {{ if .Show.ImageID }}
+        <img src="/jellyfin/{{ .Show.ImageID }}/poster" alt="" class="w-28 sm:w-36 aspect-[2/3] object-cover rounded-lg bg-base-200 shrink-0">
+      {{ end }}
+      <div class="min-w-0">
+        <h1 class="text-xl sm:text-2xl font-bold">{{ .Show.Name }}</h1>
+        <p class="text-sm text-w-muted mt-1">{{ if .Show.Year }}{{ .Show.Year }} · {{ end }}{{ len .Seasons }} season{{ if ne (len .Seasons) 1 }}s{{ end }}</p>
+      </div>
+    </div>
+    {{ if not .Seasons }}
+      <p class="text-w-sub">No episodes on disk.</p>
+    {{ end }}
+    <div class="flex flex-col gap-3">
+      {{ range $i, $s := .Seasons }}
+      <details class="jellyfin-season rounded-lg bg-base-200" {{ if eq $i 0 }}open{{ end }}>
+        <summary class="cursor-pointer select-none min-h-14 px-4 py-3 flex items-center justify-between text-base sm:text-lg font-semibold">
+          <span>{{ $s.Name }}</span>
+          <span class="text-sm font-normal text-w-muted">{{ len $s.Episodes }} episode{{ if ne (len $s.Episodes) 1 }}s{{ end }}</span>
+        </summary>
+        <ul class="flex flex-col gap-1 px-2 pb-2">
+          {{ range $s.Episodes }}
+          <li>
+            <a href="{{ .Href }}" class="flex items-center gap-3 min-h-16 px-2 py-2 rounded-lg hover:bg-base-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary">
+              {{ if .ImageID }}
+                <img src="/jellyfin/{{ .ImageID }}/poster" alt="" loading="lazy" class="w-24 sm:w-32 aspect-video object-cover rounded bg-base-300 shrink-0">
+              {{ end }}
+              <span class="w-10 shrink-0 text-center text-lg font-bold text-w-muted">{{ .Episode }}</span>
+              <span class="min-w-0 flex-1">
+                <span class="block truncate font-medium" title="{{ .Name }}">{{ .Name }}</span>
+                <span class="block text-xs text-w-muted">{{ if .Runtime }}{{ .Minutes }} min{{ end }}{{ if .Container }}{{ if .Runtime }} · {{ end }}{{ .Container }}{{ end }}{{ if .VideoCodec }} · {{ .VideoCodec }}{{ end }}</span>
+              </span>
+            </a>
+          </li>
+          {{ end }}
+        </ul>
+      </details>
+      {{ end }}
+    </div>
+  </div>
+</section>
+{{ end }}
+{{ end }}

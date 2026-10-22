@@ -7,7 +7,7 @@
 <section class="min-h-screen pt-20 sm:pt-24 pb-10 px-3 sm:px-6" id="jellyfin-player">
   <div class="max-w-[1100px] mx-auto">
     <div class="mb-3 flex items-center gap-3">
-      <a href="/jellyfin" class="btn btn-sm btn-ghost">&larr; Library</a>
+      {{ if .Item.SeriesID }}<a href="/jellyfin/show/{{ .Item.SeriesID }}" class="btn btn-ghost">&larr; {{ .Item.Series }}</a>{{ else }}<a href="/jellyfin" class="btn btn-ghost">&larr; Library</a>{{ end }}
       <h1 class="text-lg sm:text-xl font-bold truncate" title="{{ .Title }}">{{ .Title }}</h1>
     </div>
     <div class="relative">

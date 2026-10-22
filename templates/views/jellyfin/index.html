@@ -1,31 +1,58 @@
 {{ define "title" }}Jellyfin{{ end }}
+{{ define "jellyfin-card" }}
+<li>
+  <a href="{{ .Href }}" class="block group rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-primary">
+    {{ if .ImageID }}
+      <img src="/jellyfin/{{ .ImageID }}/poster" alt="" loading="lazy" class="w-full aspect-[2/3] object-cover rounded-lg bg-base-200">
+    {{ else }}
+      <div class="w-full aspect-[2/3] rounded-lg bg-base-200 flex items-center justify-center p-3 text-center text-sm text-w-muted">{{ .Name }}</div>
+    {{ end }}
+    <div class="mt-2 text-sm sm:text-base font-semibold truncate group-hover:underline" title="{{ .Title }}">{{ .Title }}</div>
+    <div class="text-xs text-w-muted">
+      {{- if .IsSeries }}{{ if .Year }}{{ .Year }}{{ end }}
+      {{- else if eq .Type "Episode" }}S{{ .Season }}E{{ .Episode }}{{ if .Container }} · {{ .Container }}{{ end }}
+      {{- else }}{{ if .Year }}{{ .Year }} · {{ end }}{{ .Container }}{{ if .VideoCodec }} · {{ .VideoCodec }}{{ end }}{{ end -}}
+    </div>
+  </a>
+</li>
+{{ end }}
 {{ define "main" }}
 {{ with .Data }}
-{{/* The Jellyfin library (services/jellyfin): each entry opens /jellyfin/:id,
-     which plays the original file through movi-player. */}}
+{{/* The Jellyfin library (services/jellyfin): shows open their season list
+     (/jellyfin/show/:id), movies and episodes the player (/jellyfin/:id). */}}
 <section class="min-h-screen pt-20 sm:pt-24 pb-10 px-3 sm:px-6">
   <div class="max-w-[1100px] mx-auto">
     <h1 class="text-xl font-bold mb-4">Jellyfin</h1>
-    <form method="get" action="/jellyfin" class="mb-4 flex gap-2" role="search">
-      <input type="search" name="q" value="{{ .Search }}" placeholder="Search the library" class="input input-bordered w-full max-w-md" autofocus>
-      <button class="btn btn-primary" type="submit">Search</button>
+    <form method="get" action="/jellyfin" class="mb-6 flex gap-2" role="search">
+      <input type="search" name="q" value="{{ .Search }}" placeholder="Search the library" class="input input-bordered input-lg w-full max-w-md">
+      <button class="btn btn-primary btn-lg" type="submit">Search</button>
+      {{ if .Search }}<a href="/jellyfin" class="btn btn-ghost btn-lg">Clear</a>{{ end }}
     </form>
     {{ if .Error }}
       <p class="text-error">Jellyfin is not reachable: {{ .Error }}</p>
-    {{ else if not .Items }}
+    {{ else if .Search }}
+      {{ if not .Items }}
+        <p class="text-w-sub">Nothing found.</p>
+      {{ else }}
+        <ul class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+          {{ range .Items }}{{ template "jellyfin-card" . }}{{ end }}
+        </ul>
+      {{ end }}
+    {{ else if and (not .Shows) (not .Movies) }}
       <p class="text-w-sub">Nothing found.</p>
     {{ else }}
-      <ul class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-        {{ range .Items }}
-        <li>
-          <a href="/jellyfin/{{ .ID }}" class="block group">
-            <img src="/jellyfin/{{ .ID }}/poster" alt="" loading="lazy" class="w-full aspect-[2/3] object-cover rounded-lg bg-base-200">
-            <div class="mt-2 text-sm font-semibold truncate group-hover:underline" title="{{ .Title }}">{{ .Title }}</div>
-            <div class="text-xs text-w-muted">{{ if .Year }}{{ .Year }} · {{ end }}{{ .Container }}{{ if .VideoCodec }} · {{ .VideoCodec }}{{ end }}</div>
-          </a>
-        </li>
-        {{ end }}
+      {{ if .Shows }}
+      <h2 class="text-lg font-bold mb-3">Shows <span class="text-w-muted font-normal">({{ len .Shows }})</span></h2>
+      <ul class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 mb-10">
+        {{ range .Shows }}{{ template "jellyfin-card" . }}{{ end }}
       </ul>
+      {{ end }}
+      {{ if .Movies }}
+      <h2 class="text-lg font-bold mb-3">Movies <span class="text-w-muted font-normal">({{ len .Movies }})</span></h2>
+      <ul class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+        {{ range .Movies }}{{ template "jellyfin-card" . }}{{ end }}
+      </ul>
+      {{ end }}
     {{ end }}
   </div>
 </section>
