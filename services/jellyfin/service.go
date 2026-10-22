@@ -123,6 +123,8 @@ type Item struct {
 	MediaSourceID string
 	// Subtitles are the first version's subtitle streams, in Jellyfin order.
 	Subtitles []Subtitle
+	// Audio are the first version's audio tracks, in file order.
+	Audio []Audio
 }
 
 // Code is "S01E02" for an episode, "" otherwise.
@@ -190,6 +192,8 @@ type apiStream struct {
 	IsForced             bool   `json:"IsForced"`
 	IsExternal           bool   `json:"IsExternal"`
 	IsTextSubtitleStream bool   `json:"IsTextSubtitleStream"`
+	Channels             int    `json:"Channels"`
+	ChannelLayout        string `json:"ChannelLayout"`
 }
 
 func (a apiItem) item() Item {
@@ -220,12 +224,16 @@ func (a apiItem) item() Item {
 			switch {
 			case s.Type == "Video" && it.VideoCodec == "":
 				it.VideoCodec = s.Codec
-			case s.Type == "Audio" && it.AudioCodec == "":
-				it.AudioCodec = s.Codec
+			case s.Type == "Audio":
+				if it.AudioCodec == "" {
+					it.AudioCodec = s.Codec
+				}
+				it.Audio = append(it.Audio, s.audio())
 			case s.Type == "Subtitle":
 				it.Subtitles = append(it.Subtitles, s.subtitle())
 			}
 		}
+		it.Audio = fileStreams(it.Audio, ms.MediaStreams)
 	}
 	return it
 }

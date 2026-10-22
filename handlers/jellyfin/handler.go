@@ -114,6 +114,17 @@ type playData struct {
 	Subtitles      []subtitleChip
 	Start          string
 	ImageSubtitles int
+	// Audio are the file's audio tracks as picker chips, StartAudio the chip
+	// id of the one playing when the page opens.
+	Audio      []audioChip
+	StartAudio string
+}
+
+// audioChip is an audio track as the picker renders it.
+type audioChip struct {
+	jellyfin.Audio
+	ID       string
+	Playable bool
 }
 
 // subtitleChip is a text subtitle as the picker renders it.
@@ -160,6 +171,12 @@ func (h *Handler) play(c *gin.Context) {
 	}
 	if s, ok := it.StartSubtitle(); ok {
 		d.Start = s.ID()
+	}
+	for _, a := range it.Audio {
+		d.Audio = append(d.Audio, audioChip{Audio: a, ID: a.ID(), Playable: a.Playable()})
+	}
+	if a, ok := it.StartAudio(); ok {
+		d.StartAudio = a.ID()
 	}
 	if it.Type == "Episode" && jellyfin.ValidID(it.SeriesID) {
 		// The way on is a nicety: a failed listing leaves the buttons out.

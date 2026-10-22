@@ -67,7 +67,7 @@
     </div>
   </div>
 
-  {{/* The picker. Same ids and classes as action/stream_video.html so
+  {{/* The picker (audio and subtitles). Same ids and classes as action/stream_video.html so
        track-dialog.js and Player.jsx drive it unchanged: a chip is a
        side-loaded track the bridge fetches, parses and draws
        (movi-tracks.js). The hidden "none" carrier is what the switch
@@ -75,7 +75,31 @@
   {{ $start := .Start }}
   <dialog class="modal" id="subtitles" data-persist="false" data-subtitles-off="{{ if $start }}false{{ else }}true{{ end }}">
     <div class="modal-box w-full sm:w-11/12 max-w-5xl">
-      <div class="flex items-center gap-3 mb-3">
+      {{/* Audio: the file's tracks as the torrent page renders a probed
+           one (provider MediaProbe, data-stream = the index in the file),
+           so a click is bridge.showAudio -> movi-player selectAudioTrack.
+           jellyfin.js re-checks data-stream against the tracks movi-player
+           demuxed. Only with a choice to make. */}}
+      {{ if gt (len .Audio) 1 }}
+      {{ $startAudio := .StartAudio }}
+      <div class="mb-5">
+        <h3 class="font-bold text-lg mb-2">Audio</h3>
+        <div id="audio-tracks" class="flex flex-wrap gap-2" role="radiogroup" aria-label="Audio">
+          {{ range .Audio }}
+          {{ $on := eq .ID $startAudio }}
+          <button type="button" role="radio" aria-checked="{{ if $on }}true{{ else }}false{{ end }}"
+                  data-id="{{ .ID }}" data-provider="MediaProbe" data-stream="{{ .Stream }}" data-srclang="{{ .Language }}" data-label="{{ .Label }}" data-codec="{{ .Codec }}"
+                  {{ if not .Playable }}data-unplayable="true" {{ end }}{{ if $on }}data-default="true" {{ end }}
+                  class="audio track-chip min-h-12 px-4{{ if $on }} track-chip-active{{ end }}">
+            <svg class="chip-check w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" aria-hidden="true"{{ if not $on }} hidden{{ end }}><polyline points="20 6 9 17 4 12"/></svg>
+            <span class="max-w-[16rem] truncate" title="{{ .Label }}">{{ .Label }}</span>
+            {{ if not .Playable }}<span class="badge badge-xs badge-warning uppercase tracking-wider" title="The browser player may not decode {{ .Codec }}">{{ .Codec }} · may not play</span>{{ end }}
+          </button>
+          {{ end }}
+        </div>
+      </div>
+      {{ end }}
+      <div class="flex items-center gap-3 mb-3{{ if gt (len .Audio) 1 }} pt-5 border-t border-w-line{{ end }}">
         <h3 class="font-bold text-lg">Subtitles</h3>
         <label class="flex items-center cursor-pointer shrink-0">
           <span class="sr-only">Subtitles</span>

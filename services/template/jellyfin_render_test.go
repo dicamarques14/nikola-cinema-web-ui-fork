@@ -93,6 +93,8 @@ func TestJellyfinPlayRendersHeaderNavAndSubtitles(t *testing.T) {
 		Subtitles      []chip
 		Start          string
 		ImageSubtitles int
+		Audio          []audioChip
+		StartAudio     string
 	}{
 		Item: ep, Title: "Seinfeld - The Pony Remark", StreamURL: "/jellyfin/" + jfEp + "/stream",
 		Prev: prev, Next: next,
@@ -116,6 +118,9 @@ func TestJellyfinPlayRendersHeaderNavAndSubtitles(t *testing.T) {
 			t.Errorf("play page lacks %q", want)
 		}
 	}
+	if strings.Contains(out, `id="audio-tracks"`) {
+		t.Error("a single-track (here: no-track) file needs no audio picker")
+	}
 	if n := strings.Count(out, `data-default="true"`); n != 1 {
 		t.Errorf("%d default subtitle chips, want exactly 1 (jf-5)", n)
 	}
@@ -128,5 +133,48 @@ func TestJellyfinPlayRendersHeaderNavAndSubtitles(t *testing.T) {
 	out = renderJellyfin(t, "play.html", data)
 	if !strings.Contains(out, `data-subtitles-off="true"`) || !strings.Contains(out, `data-lang="und" data-default="true"`) {
 		t.Error("with no start track the picker must open off on the none carrier")
+	}
+}
+
+type audioChip struct {
+	jellyfin.Audio
+	ID       string
+	Playable bool
+}
+
+func TestJellyfinPlayRendersAudioPicker(t *testing.T) {
+	ep := &jellyfin.Item{ID: jfEp, Name: "The Pony Remark", Type: "Episode"}
+	data := struct {
+		Item           *jellyfin.Item
+		Title          string
+		StreamURL      string
+		Prev, Next     *jellyfin.Item
+		Subtitles      []struct{}
+		Start          string
+		ImageSubtitles int
+		Audio          []audioChip
+		StartAudio     string
+	}{
+		Item: ep, Title: "x", StreamURL: "/jellyfin/" + jfEp + "/stream",
+		Audio: []audioChip{
+			{jellyfin.Audio{Index: 1, Stream: 1, Language: "eng", Label: "English · Dolby Digital+ · 5.1", Codec: "eac3"}, "jfa-1", true},
+			{jellyfin.Audio{Index: 2, Stream: 2, Language: "por", Label: "Portuguese · WMA", Codec: "wmapro"}, "jfa-2", false},
+		},
+		StartAudio: "jfa-1",
+	}
+	out := renderJellyfin(t, "play.html", data)
+	for _, want := range []string{
+		`id="audio-tracks"`,
+		`data-id="jfa-1" data-provider="MediaProbe" data-stream="1" data-srclang="eng" data-label="English · Dolby Digital&#43; · 5.1" data-codec="eac3"`,
+		`class="audio track-chip min-h-12 px-4 track-chip-active"`,
+		`data-unplayable="true"`,
+		"wmapro · may not play",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("play page lacks %q", want)
+		}
+	}
+	if n := strings.Count(out, `data-unplayable="true"`); n != 1 {
+		t.Errorf("%d unplayable chips, want 1", n)
 	}
 }
