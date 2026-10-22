@@ -19,6 +19,7 @@ import {
     activateSubtitle, findSubtitleItem, findSubtitlesModal, offerStorage, readUpsellCard, releaseTrackDialog, toggleDialog, wireTrackHandlers,
 } from './track-dialog.js';
 import { LoadingSpinner } from './icons';
+import { applyBufferSize } from './buffer-budget.js';
 import { BufferingPill, capCardOpen, closeCapCard, onCapCard, openCapCard } from './BufferingLabel';
 import { answerLabel, capLock, lockKey, statusSpoke } from './buffering-label';
 import { currentPlayerCause, currentPlayerLabel, onPlayerLabel } from '../playerLabel';
@@ -1151,6 +1152,10 @@ function upgradeToMovi(media, { controls, features, hasPicker }) {
     el.setAttribute('wasmurl', wasmURL());
     el.setAttribute('controlslist', controlsListFor(features, hasPicker));
     if (controls) el.setAttribute('controls', '');
+    // A larger window than the element's 520 MB, as far as the device can
+    // afford: most films then fit whole and keep downloading while paused
+    // (buffer-budget.js).
+    applyBufferSize(el, navigator);
     const title = media.dataset.resourceTitle;
     if (title) el.setAttribute('title', title);
     // With the picker on the page it owns the tracks (movi-tracks.js): the

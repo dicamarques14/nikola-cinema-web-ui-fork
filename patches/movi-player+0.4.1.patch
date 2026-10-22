@@ -1,0 +1,79 @@
+diff --git a/node_modules/movi-player/dist/element.slim.js b/node_modules/movi-player/dist/element.slim.js
+index b956c09..2c579c2 100644
+--- a/node_modules/movi-player/dist/element.slim.js
++++ b/node_modules/movi-player/dist/element.slim.js
+@@ -2682,7 +2682,7 @@ class HttpSource {
+   }
+   setMaxBufferSize(A2) {
+     if (A2 > 0 && (this.maxBufferSizeMB = A2, this.size > 0)) {
+-      const I2 = 1024 * A2 * 1024, g2 = this.size <= I2 ? this.size : Math.floor(0.08 * this.size);
++      const I2 = 1024 * A2 * 1024, g2 = this.size <= I2 ? this.size : this.size /* webtor: window = whole buffersize */;
+       this.resizeBuffer(g2);
+     }
+   }
+@@ -2696,13 +2696,20 @@ class HttpSource {
+     return this.rangeUnsupported;
+   }
+   resizeBuffer(A2) {
+-    const I2 = 1024 * this.maxBufferSizeMB * 1024, C2 = Math.max(EA, Math.min(I2, A2));
++    const I2 = 1024 * this.maxBufferSizeMB * 1024, C2 = Math.max(EA, Math.min(I2, A2, this._allocCap || 1 / 0));
+     if (this.bufferSize !== C2 || !this.sharedBuffer && !this.fallbackBuffer) {
+       this.bufferSize = C2;
+       try {
+         "undefined" != typeof SharedArrayBuffer && crossOriginIsolated ? (this.sharedBuffer = new SharedArrayBuffer(24 + this.bufferSize), this.headerView = new Int32Array(this.sharedBuffer, 0, 6), this.dataView = new Uint8Array(this.sharedBuffer, 24, this.bufferSize), this.useSharedBuffer = true, g.info(QA, `Using SharedArrayBuffer for zero-copy streaming (${(this.bufferSize / 1024 / 1024).toFixed(2)} MB)`)) : (this.fallbackBuffer = new Uint8Array(this.bufferSize), g.info(QA, `Using standard ArrayBuffer (${(this.bufferSize / 1024 / 1024).toFixed(2)} MB)`));
+       } catch {
+-        this.fallbackBuffer = new Uint8Array(this.bufferSize), g.warn(QA, `SharedArrayBuffer init failed, using fallback (${(this.bufferSize / 1024 / 1024).toFixed(2)} MB)`);
++        /* webtor: halve on allocation failure */ for (this.fallbackBuffer = null; ; ) try {
++          this.fallbackBuffer = new Uint8Array(this.bufferSize);
++          break;
++        } catch (B2) {
++          if (this.bufferSize <= EA) throw B2;
++          this.bufferSize = this._allocCap = Math.max(EA, Math.floor(this.bufferSize / 2));
++        }
++        g.warn(QA, `SharedArrayBuffer init failed, using fallback (${(this.bufferSize / 1024 / 1024).toFixed(2)} MB)`);
+       }
+     }
+   }
+@@ -2870,8 +2877,8 @@ class HttpSource {
+     if (this.size >= 0) return this.size;
+     try {
+       this.size = await this.resolveSize(), g.debug(QA, `File size: ${this.size} bytes`);
+-      const A2 = 1024 * this.maxBufferSizeMB * 1024, I2 = this.size <= A2, C2 = I2 ? this.size : Math.floor(0.08 * this.size);
+-      return this.resizeBuffer(C2), g.info(QA, `Buffer: ${(this.bufferSize / 1024 / 1024).toFixed(1)}MB ${I2 ? "(full file cache)" : "(8% sliding window)"} for ${(this.size / 1024 / 1024).toFixed(1)}MB file`), this.size;
++      const A2 = 1024 * this.maxBufferSizeMB * 1024, I2 = this.size <= A2, C2 = I2 ? this.size : this.size /* webtor: window = whole buffersize */;
++      return this.resizeBuffer(C2), g.info(QA, `Buffer: ${(this.bufferSize / 1024 / 1024).toFixed(1)}MB ${I2 ? "(full file cache)" : "(sliding window, whole buffersize)"} for ${(this.size / 1024 / 1024).toFixed(1)}MB file`), this.size;
+     } catch (A2) {
+       const I2 = A2.message || "";
+       if ("TypeError" === A2.name && I2.includes("Failed to fetch") && !I2.includes("HTTP")) throw new Error("Failed to fetch video resource. Check your connection or CORS settings.");
+@@ -2957,7 +2964,7 @@ class HttpSource {
+       n2 = null, A3.response.then((A4) => A4.body?.cancel()).catch(() => {
+       });
+     }, D2 = (A3, I3) => {
+-      const g2 = this.size > 0 && this.bufferSize >= this.size ? this.size : Math.floor(Math.min(iA, 0.9 * this.bufferSize)), C3 = Math.min(g2, I3 ? 8388608 : this.firstRangeBytes);
++      const g2 = this.size > 0 && this.bufferSize >= this.size ? this.size : Math.floor(0.9 * this.bufferSize), C3 = Math.min(g2, I3 ? 8388608 : this.firstRangeBytes);
+       return this.size > 0 ? Math.min(A3 + C3 - 1, this.size - 1) : A3 + C3 - 1;
+     };
+     for (; this.atomicIsStreaming() && this.streamGeneration === I2 && !this.closed; ) try {
+@@ -3068,11 +3075,11 @@ class HttpSource {
+               this.atomicSetWritePos(A6);
+               const C5 = this.atomicGetBufferStart() + A6;
+               C5 > this.maxBufferedEnd && (this.maxBufferedEnd = C5);
+-              const E3 = this.size > 0 && this.bufferSize >= this.size, s3 = C5 - t2, n3 = Math.floor(Math.min(iA, 0.9 * this.bufferSize)), h3 = !E3 && s3 >= n3, D3 = !E3 && A6 >= 0.9 * w2.length;
++              const E3 = this.size > 0 && this.bufferSize >= this.size, s3 = C5 - t2, n3 = Math.floor(0.9 * this.bufferSize), h3 = !E3 && s3 >= n3, D3 = !E3 && A6 >= 0.9 * w2.length;
+               if (h3 || D3) {
+                 const B5 = this.atomicGetBufferStart(), Q4 = this.consumedUpTo() - B5;
+                 if (Q4 > 0.25 * this.bufferSize && this.size > 0 && C5 < this.size) {
+-                  const I3 = Math.floor(Q4);
++                  const I3 = Math.floor(Q4 - 0.1 * this.bufferSize) /* webtor: keep 10% behind */;
+                   if (I3 > 0 && A6 > I3) {
+                     w2.copyWithin(0, I3, A6), this.atomicSetBufferStart(B5 + I3), this.atomicSetWritePos(A6 - I3), t2 = B5 + I3, this.unlock(), g.debug(QA, `Buffer compacted: reclaimed ${(I3 / 1024 / 1024).toFixed(1)}MB`);
+                     continue;
+@@ -84568,7 +84575,7 @@ class MoviElement extends HTMLElement {
+         this._src.startsWith("http://") || this._src.startsWith("https://") || this._src.startsWith("blob:") || this._src.startsWith("data:"), C2 = { type: "url", url: this._src };
+       }
+       this._headers && C2 && "url" === C2.type && (C2.headers = this._headers), this._thumb = this.hasAttribute("thumb"), this._thumbPrecise = MoviElement.wantsPrecisePreviews(this.getAttribute("thumb")), "object" == typeof this._storyboard && null !== this._storyboard || (this._storyboard = MoviElement.thumbnailTrackSrc(this));
+-      const B2 = { source: C2, decoder: this._sw, cache: { type: "lru", maxSizeMB: 520 }, enablePreviews: (this._thumb || !!this._storyboard) && !this._audioOnly, ...this._fps > 0 && { frameRate: this._fps }, ...this._headers && { headers: this._headers }, ...this._audioOnly && { audioOnly: true }, ...this._sourceAdapter && { sourceAdapter: this._sourceAdapter } };
++      const B2 = { source: C2, decoder: this._sw, cache: { type: "lru", maxSizeMB: this._bufferSize > 0 ? this._bufferSize : 520 }, enablePreviews: (this._thumb || !!this._storyboard) && !this._audioOnly, ...this._fps > 0 && { frameRate: this._fps }, ...this._headers && { headers: this._headers }, ...this._audioOnly && { audioOnly: true }, ...this._sourceAdapter && { sourceAdapter: this._sourceAdapter } };
+       this._audioTracks.length > 0 ? B2.audioTracks = this._audioTracks.map((A3) => ({ url: A3.src, type: A3.type, lang: A3.lang, label: A3.label })) : this._audioSrc && (B2.audioSource = { type: "url", url: this._audioSrc }), this._subtitleTracks.length > 0 && (B2.subtitleTracks = this._subtitleTracks.map((A3) => ({ url: A3.src, lang: A3.lang, label: A3.label, format: A3.format })));
+       const Q2 = this.getAttribute("licenseurl") || "", E2 = this.hasAttribute("drm") || Q2.length > 0, t2 = "string" == typeof this._src && (this._src.toLowerCase().includes(".m3u8") || this._src.toLowerCase().includes(".mpd") || this._src.toLowerCase().includes(".ism"));
+       if (E2 && t2) {
