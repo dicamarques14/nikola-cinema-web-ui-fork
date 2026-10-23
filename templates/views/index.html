@@ -7,7 +7,7 @@
 {{ end }}
 {{ define "og" }}
     <meta property="og:type" content="website">
-    <meta property="og:site_name" content="Webtor.io">
+    <meta property="og:site_name" content="Nikola's Cinema">
     {{ with .Data }}
     {{ if .Tool }}
     <meta property="og:title" content="{{ t $.Lang .Tool.Title | seoFriendly }} – {{ t $.Lang .Tool.Benefit }}">
@@ -21,60 +21,25 @@
     {{ end }}
     {{ template "og_card" . }}
 {{ end }}
-{{ define "head_extra" }}
-    {{ with .Data }}{{ if .Tool }}
-    <script type="application/ld+json">
-    {
-        "@context": "https://schema.org",
-        "@type": "WebApplication",
-        "name": "{{ t $.Lang .Tool.Title | seoFriendly }}",
-        "description": "{{ t $.Lang .Tool.Description }}",
-        "url": "{{ canonicalURL $.Lang (printf "/%s" .Tool.Url) }}",
-        "applicationCategory": "UtilitiesApplication",
-        "operatingSystem": "Any",
-        "offers": {
-            "@type": "Offer",
-            "price": "0",
-            "priceCurrency": "USD"
-        },
-        "provider": {
-            "@type": "Organization",
-            "name": "Webtor",
-            "url": "{{ domain }}"
-        }
-    }
-    </script>
-    {{ else }}
-    <script type="application/ld+json">
-    {
-        "@context": "https://schema.org",
-        "@type": "WebApplication",
-        "name": "Webtor",
-        "description": "{{ t $.Lang "home.jsonLdDescription" }}",
-        "url": "{{ canonicalURL $.Lang "/" }}",
-        "applicationCategory": "UtilitiesApplication",
-        "operatingSystem": "Any",
-        "offers": {
-            "@type": "Offer",
-            "price": "0",
-            "priceCurrency": "USD"
-        }
-    }
-    </script>
-    {{ end }}{{ end }}
-{{ end }}
+{{ define "head_extra" }}{{/* No JSON-LD: Nikola's Cinema is a private instance (QW-3). */}}{{ end }}
 {{ define "main" }}
 {{ with .Data }}
+{{/* $home: the signed-in Home (QW-1). No hero, marketing, demo, onboarding
+     or about block; Continue Watching leads and the magnet/upload box
+     follows, compact. Anonymous visitors and tool pages keep the landing. */}}
+{{ $home := and (not .Tool) $.User ($.User | hasAuth) }}
 <!-- Hero Section -->
-<section class="flex flex-col items-center text-center relative overflow-hidden pt-[120px] pb-16 px-3 sm:px-6">
+<section class="flex flex-col items-center text-center relative overflow-hidden {{ if $home }}pt-[104px]{{ else }}pt-[120px]{{ end }} pb-16 px-3 sm:px-6">
+    {{ if not $home }}
     {{ template "hero_backdrop" }}
 
     <!-- big logo -->
     <div class="hero-logo font-logo text-[clamp(4rem,10vw,6.5rem)] font-light tracking-tight leading-none mb-7 relative z-10">
         <a href="{{ langPath $.Lang "/" }}" data-async-target="main" class="no-underline">
-            web<span class="text-w-pink">tor</span>
+            Nikola's <span class="text-w-pink">Cinema</span>
         </a>
     </div>
+    {{ end }}
 
     {{ if .Tool }}
     <!-- Tool page hero -->
@@ -91,7 +56,7 @@
     <p class="relative z-10 text-lg text-w-sub max-w-[560px] mb-12 leading-relaxed">
         {{ t $.Lang .Tool.Description }}
     </p>
-    {{ else }}
+    {{ else if not $home }}
     <!-- Homepage hero -->
     <div class="badge badge-lg bg-w-pink/10 border-w-pink/30 text-w-pinkL gap-2 py-3 px-5 mb-8 relative z-10 text-sm font-medium max-sm:text-xs max-sm:py-2 max-sm:px-3 max-sm:h-auto max-sm:whitespace-normal">
         <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
@@ -124,8 +89,10 @@
     </div>
     {{ end }}
 
+    {{ if $home }}{{ template "continue_watching" (withContext $ .ContinueWatching) }}{{ end }}
+
     <!-- input area -->
-    <div class="relative z-10 w-full max-w-[680px]">
+    <div class="relative z-10 w-full max-w-[680px]{{ if $home }} mt-10{{ end }}">
         <!-- search -->
         <form action="{{ langPath $.Lang "/" }}" method="post" enctype="multipart/form-data" class="join w-full" data-async-target="main">
             <div class="join-item flex items-center bg-base-300 border border-w-line rounded-l-[14px] flex-1 h-12 focus-within:border-w-pink focus-within:shadow-[0_0_40px_rgba(232,67,147,0.12)] transition-all">
@@ -151,18 +118,19 @@
         </form>
 
         <!-- divider -->
-        <div class="divider text-w-muted text-xs font-semibold tracking-widest uppercase my-5 before:bg-w-line after:bg-w-line">{{ t $.Lang "home.or" }}</div>
+        <div class="divider text-w-muted text-xs font-semibold tracking-widest uppercase {{ if $home }}my-3{{ else }}my-5{{ end }} before:bg-w-line after:bg-w-line">{{ t $.Lang "home.or" }}</div>
 
         <!-- upload zone -->
         <form action="{{ langPath $.Lang "/" }}" method="post" enctype="multipart/form-data" class="dropzone" data-async-target="main">
-            <label for="dropzone-input" class="upload-dashed rounded-2xl py-6 px-6 text-center cursor-pointer block">
+            <label for="dropzone-input" class="upload-dashed rounded-2xl {{ if $home }}py-4{{ else }}py-6{{ end }} px-6 text-center cursor-pointer block">
                 <p class="text-[0.95rem] text-w-sub"><span class="text-w-pinkL font-semibold">{{ t $.Lang "home.dropzone" }}</span> {{ t $.Lang "home.dropzoneHint" }}</p>
-                <span class="badge badge-sm bg-white/5 border-0 text-w-muted mt-3">{{ t $.Lang "home.noSizeLimit" }}</span>
+                {{ if not $home }}<span class="badge badge-sm bg-white/5 border-0 text-w-muted mt-3">{{ t $.Lang "home.noSizeLimit" }}</span>{{ end }}
             </label>
             <input class="dropzone-input hidden" name="resource" type="file" />
             <input name="instruction" value="{{ .Instruction }}" type="hidden" />
         </form>
 
+        {{ if not $home }}
         <!-- demo & speedtest links -->
         <div class="flex justify-center items-center gap-4 mt-4">
             <form action="{{ langPath $.Lang "/" }}" method="post" enctype="multipart/form-data" data-async-target="main">
@@ -178,6 +146,7 @@
                 {{ t $.Lang "home.speedTest" }}
             </a>
         </div>
+        {{ end }}
     </div>
 
     {{/* `has` is required, not defensive: this view is also rendered by
@@ -185,6 +154,7 @@
          and a missing field is a template execution error — it would break
          every magnet/search/upload submit. Same reason as "Job" and "Args"
          above. */}}
+    {{ if not $home }}
     {{ if has . "Onboarding" }}{{ template "onboarding_checklist" (withContext $ .Onboarding) }}{{ end }}
     {{ template "continue_watching" (withContext $ .ContinueWatching) }}
     {{ template "discover" (withContext $ .Tool) }}
@@ -200,10 +170,11 @@
     </div>
     {{ end }}
     </div>
+    {{ end }}
 
     {{ "index.js" | asset }}
 </section>
 
-{{ template "about" $ }}
+{{ if not $home }}{{ template "about" $ }}{{ end }}
 {{ end }}
 {{ end }}

@@ -47,6 +47,8 @@ func renderIndexMain(t *testing.T, tool *hc.Tool, extra ...map[string]interface{
 		"canonicalURL": func(lang, p string) string { return p },
 		"domain":       func() string { return "" },
 		"isPaid":       func(any) bool { return true },
+		// Signed in iff the test puts a "User" in the context.
+		"hasAuth": func(u any) bool { return u != nil },
 		"promoOffer":   func() bool { return false },
 		"withContext": func(ctx, data interface{}) interface{} {
 			return map[string]interface{}{"Ctx": ctx, "Data": data}
@@ -156,4 +158,22 @@ func errorBlock(page string) string {
 		return page[i:min(len(page), i+300)]
 	}
 	return "(no error block)"
+}
+
+// QW-1: the signed-in Home drops the landing (hero, demo, about) but keeps
+// the magnet form; anonymous visitors still get the landing.
+func TestSignedInHomeDropsTheLanding(t *testing.T) {
+	anon := renderIndexMain(t, nil)
+	home := renderIndexMain(t, nil, map[string]interface{}{"User": "me"})
+	for _, marker := range []string{`data-umami-event="try-demo"`, "home.heading"} {
+		if !strings.Contains(anon, marker) {
+			t.Errorf("anonymous home lost %q", marker)
+		}
+		if strings.Contains(home, marker) {
+			t.Errorf("signed-in home still renders %q", marker)
+		}
+	}
+	if !strings.Contains(home, `name="resource"`) {
+		t.Error("signed-in home lost the magnet form")
+	}
 }

@@ -71,9 +71,9 @@ module.exports = async (env, options) => {
             prefix: `${t}/`,
             manifest: './assets/src/manifest.base.json',
             favicons: {
-                appName: 'Webtor',
-                appShortName: 'Webtor',
-                appDescription: 'Stream and download torrents right in your browser — free, open-source, no app to install.',
+                appName: "Nikola's Cinema",
+                appShortName: 'Cinema',
+                appDescription: "Nikola's Cinema — a private media center, based on webtor.io.",
                 lang: 'en',
                 background: '#0a0e1a',
                 theme_color: '#0a0e1a',

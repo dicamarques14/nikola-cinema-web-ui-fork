@@ -14,9 +14,7 @@
 
     <p class="hidden sm:block text-[1.05rem] text-w-sub leading-relaxed mb-10">{{ t $.Lang "profile.subtitle" }}</p>
 
-    <div id="tier">
-        {{ template "profile/tier" $ }}
-    </div>
+    {{/* No tier/payments card: Nikola's Cinema has no plans (ST-4). */}}
     {{ if .Data.VaultStats }}
     <div id="vault" data-async-layout="{{`{{ template "profile/vault" (withContext $ .Data.VaultStats) }}`}}">
         {{ template "profile/vault" (withContext $ .Data.VaultStats) }}

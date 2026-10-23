@@ -265,6 +265,10 @@ func TestStepPathsMatchNavbarLinks(t *testing.T) {
 		// The trial is not a section of the site: /trial is handlers/trial's
 		// route (its tests serve it through the router, prefixes included).
 		offer.TrialPath(offer.FromOnboarding): true,
+		// Locked PRO steps upsell through /donate, handlers/donate's route.
+		// The navbar no longer links it: Nikola's Cinema has no Donate
+		// button (QW-2/ST-4).
+		"/donate": true,
 	}
 
 	p, now := progress(time.Hour, false, false, false, false)

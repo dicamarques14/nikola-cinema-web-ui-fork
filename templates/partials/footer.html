@@ -1,60 +1,10 @@
 {{ define "footer"}}
-    <footer class="bg-base-200 border-t border-w-line">
-        <div class="grid gap-8 grid-cols-2 md:grid-cols-[1.5fr_1fr_1fr_1fr_1fr] p-10 max-w-[1100px] mx-auto">
-            <aside>
-                <a href="{{ langPath $.Lang "/" }}" data-async-target="main" class="font-logo text-[1.4rem] font-light no-underline">web<span class="text-w-pink">tor</span></a>
-                <p class="text-w-muted text-sm max-w-[280px] leading-relaxed mt-2">{{ t $.Lang "footer.description" }}</p>
-            </aside>
-            <nav class="flex flex-col gap-2">
-                <h6 class="footer-title text-w-muted">{{ t $.Lang "footer.tools" }}</h6>
-                {{ range tools }}{{ if not .Guide }}
-                    <a class="link link-hover text-sm text-w-sub hover:text-w-pinkL sm:whitespace-nowrap" href="{{ langPath $.Lang (printf "/%s" .Url) }}" data-async-target="main">{{ t $.Lang .Title }}</a>
-                {{ end }}{{ end }}
-            </nav>
-            <nav class="flex flex-col gap-2">
-                <h6 class="footer-title text-w-muted">{{ t $.Lang "footer.resources" }}</h6>
-                <a class="link link-hover text-sm text-w-sub hover:text-w-pinkL" href="{{ langPath $.Lang "/about" }}" data-async-target="main">{{ t $.Lang "footer.about" }}</a>
-                <a class="link link-hover text-sm text-w-sub hover:text-w-pinkL" href="{{ langPath $.Lang "/speedtest" }}" data-async-target="main">{{ t $.Lang "footer.speedTest" }}</a>
-                <a class="link link-hover text-sm text-w-sub hover:text-w-pinkL" href="https://blog.webtor.io/{{ blogLang $.Lang }}/post/" target="_blank">{{ t $.Lang "footer.blog" }}</a>
-                <a class="link link-hover text-sm text-w-sub hover:text-w-pinkL" href="https://github.com/webtor-io/" target="_blank">GitHub</a>
-                <a class="link link-hover text-sm text-w-sub hover:text-w-pinkL" href="https://www.reddit.com/r/webtor/" target="_blank">Reddit</a>
-                {{ if embedEnabled }}
-                <a class="link link-hover text-sm text-w-sub hover:text-w-pinkL" href="https://github.com/webtor-io/embed-sdk-js" target="_blank">SDK</a>
-                {{ end }}
-                <a class="link link-hover text-sm text-w-sub hover:text-w-pinkL" href="{{ apiDocsURL }}" target="_blank" data-umami-event="footer-api-docs">API</a>
-                <a class="link link-hover text-sm text-w-sub hover:text-w-pinkL" href="https://rapidapi.com/paveltatarsky-Dx4aX7s_XBt/api/webtor/">RapidAPI</a>
-            </nav>
-            {{ if useAbuseStore }}
-            <nav class="flex flex-col gap-2">
-                <h6 class="footer-title text-w-muted">{{ t $.Lang "footer.support" }}</h6>
-                <a class="link link-hover text-sm text-w-sub hover:text-w-pinkL" href="{{ langPath $.Lang "/support" }}" data-async-target="main">{{ t $.Lang "footer.helpCenter" }}</a>
-                {{/* Guides sit under support because that is what they are:
-                     the questions people would otherwise write in. Their
-                     titles are questions, unlike the capability pages in the
-                     Tools column. */}}
-                <h6 class="footer-title text-w-muted mt-4">{{ t $.Lang "footer.guides" }}</h6>
-                {{ range tools }}{{ if .Guide }}
-                    <a class="link link-hover text-sm text-w-sub hover:text-w-pinkL" href="{{ langPath $.Lang (printf "/%s" .Url) }}" data-async-target="main">{{ t $.Lang .Title }}</a>
-                {{ end }}{{ end }}
-            </nav>
-            <nav class="flex flex-col gap-2">
-                <h6 class="footer-title text-w-muted">{{ t $.Lang "footer.legal" }}</h6>
-                <a class="link link-hover text-sm text-w-sub hover:text-w-pinkL" href="{{ langPath $.Lang "/legal/dmca" }}" data-async-target="main">{{ t $.Lang "footer.dmca" }}</a>
-                <a class="link link-hover text-sm text-w-sub hover:text-w-pinkL capitalize" href="{{ langPath $.Lang "/legal/privacy" }}" data-async-target="main">{{ t $.Lang "footer.privacyPolicy" }}</a>
-                <a class="link link-hover text-sm text-w-sub hover:text-w-pinkL" href="{{ langPath $.Lang "/legal/tos" }}" data-async-target="main">{{ t $.Lang "footer.termsOfService" }}</a>
-                <a class="link link-hover text-sm text-w-sub hover:text-w-pinkL" href="{{ langPath $.Lang "/legal/refund" }}" data-async-target="main">{{ t $.Lang "footer.refundPolicy" }}</a>
-            </nav>
-            {{ end }}
-        </div>
-        <div class="border-t border-w-line py-6 px-10">
-            <div class="max-w-[1100px] mx-auto flex justify-between items-center text-xs text-w-muted">
-                <span>{{ tp $.Lang "footer.copyright" "Year" now.UTC.Year }} &middot; <span class="font-semibold">{{ t $.Lang "footer.ageMark" }}</span></span>
-                <span>{{ t $.Lang "footer.filmData" }} <a href="https://www.themoviedb.org/" target="_blank" class="link link-hover text-w-muted hover:text-w-pinkL">TMDB</a></span>
-                <div class="flex gap-5">
-                    <a href="https://github.com/webtor-io/" target="_blank" class="link link-hover text-w-muted hover:text-w-pinkL">GitHub</a>
-                    <a href="https://www.reddit.com/r/webtor/" target="_blank" class="link link-hover text-w-muted hover:text-w-pinkL">Reddit</a>
-                </div>
-            </div>
+    {{/* Minimal footer (QW-2): no SaaS link columns. TMDB attribution is
+         required by its terms; the webtor credit stays. */}}
+    <footer class="border-t border-w-line py-5 px-6">
+        <div class="max-w-[1100px] mx-auto flex flex-wrap justify-between items-center gap-3 text-sm text-w-muted">
+            <span>Nikola's Cinema &middot; Based on <a href="https://github.com/webtor-io/" target="_blank" rel="noopener" class="link link-hover text-w-muted hover:text-w-pinkL">webtor.io</a></span>
+            <span>{{ t $.Lang "footer.filmData" }} <a href="https://www.themoviedb.org/" target="_blank" rel="noopener" class="link link-hover text-w-muted hover:text-w-pinkL">TMDB</a></span>
         </div>
     </footer>
 {{ end }}
