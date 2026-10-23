@@ -70,6 +70,10 @@ func renderIndexMain(t *testing.T, tool *hc.Tool, extra ...map[string]interface{
 			t.Fatal(err)
 		}
 	}
+	// A marker, so a test can tell the Home rails were placed.
+	if _, err := tpl.Parse(`{{ define "home_rails" }}<i data-home-rails-stub></i>{{ end }}`); err != nil {
+		t.Fatal(err)
+	}
 	ctx := map[string]interface{}{
 		"Lang": "en",
 		"Data": &indexData{Tool: tool},
@@ -160,8 +164,10 @@ func errorBlock(page string) string {
 	return "(no error block)"
 }
 
-// QW-1: the signed-in Home drops the landing (hero, demo, about) but keeps
-// the magnet form; anonymous visitors still get the landing.
+// QW-1 / NH-2 / NH-3: the signed-in Home drops the landing (hero, demo,
+// about) and the magnet/upload box (pasting moved to the nav search) and
+// renders the poster rails; anonymous visitors still get the landing and
+// its forms.
 func TestSignedInHomeDropsTheLanding(t *testing.T) {
 	anon := renderIndexMain(t, nil)
 	home := renderIndexMain(t, nil, map[string]interface{}{"User": "me"})
@@ -173,7 +179,22 @@ func TestSignedInHomeDropsTheLanding(t *testing.T) {
 			t.Errorf("signed-in home still renders %q", marker)
 		}
 	}
-	if !strings.Contains(home, `name="resource"`) {
-		t.Error("signed-in home lost the magnet form")
+	if strings.Contains(home, `name="resource"`) {
+		t.Error("signed-in home still renders the magnet/upload box")
+	}
+	if !strings.Contains(home, `data-home-rails-stub`) {
+		t.Error("signed-in home does not render the rails")
+	}
+	if !strings.Contains(anon, `name="resource"`) {
+		t.Error("anonymous home lost the magnet form")
+	}
+	if strings.Contains(anon, `data-home-rails-stub`) {
+		t.Error("anonymous home renders the signed-in rails")
+	}
+	for _, tool := range hc.Tools {
+		page := renderIndexMain(t, &tool, map[string]interface{}{"User": "me"})
+		if !strings.Contains(page, `name="resource"`) || strings.Contains(page, `data-home-rails-stub`) {
+			t.Errorf("%s: a signed-in tool page must keep its form and no rails", tool.Url)
+		}
 	}
 }

@@ -1,6 +1,8 @@
 package web
 
 import (
+	"strings"
+
 	"github.com/gin-gonic/gin"
 	"github.com/webtor-io/web-ui/handlers/session"
 	"github.com/webtor-io/web-ui/models"
@@ -253,4 +255,37 @@ func (c *Context) Onboarding() *models.OnboardingChecklist {
 	cl := resolve()
 	c.ginCtx.Set(onboardingContextKey, cl)
 	return cl
+}
+
+// NavSection names the navbar destination the current page belongs to, so
+// partials/nav.html can mark it (aria-current, NH-1): "home", "discover",
+// "library", "jellyfin", "vault", "notifications", "profile", or "" for a
+// page that is none of them (a resource page, a tool page). Discover and its
+// watchlist mode share /discover; the query is not part of Path, so both
+// read as "discover" and the bar marks Discover.
+func (c *Context) NavSection() string {
+	p := c.Path
+	if c.Lang != "" && c.Lang != i18n.DefaultLang {
+		p = strings.TrimPrefix(p, "/"+c.Lang)
+		if p == "" {
+			p = "/"
+		}
+	}
+	switch {
+	case p == "/":
+		return "home"
+	case p == "/discover" || strings.HasPrefix(p, "/discover/"):
+		return "discover"
+	case p == "/lib" || strings.HasPrefix(p, "/lib/"):
+		return "library"
+	case p == "/jellyfin" || strings.HasPrefix(p, "/jellyfin/"):
+		return "jellyfin"
+	case p == "/vault" || strings.HasPrefix(p, "/vault/"):
+		return "vault"
+	case p == "/notifications":
+		return "notifications"
+	case p == "/profile" || strings.HasPrefix(p, "/profile/"):
+		return "profile"
+	}
+	return ""
 }

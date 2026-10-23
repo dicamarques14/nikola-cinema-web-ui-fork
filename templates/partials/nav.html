@@ -10,105 +10,99 @@
     window._tierUpdated = {{ .TierUpdated }};
     window._sessionID = "{{ .SessionID }}";
 </script>
-<div class="navbar navbar-redesign fixed top-0 inset-x-0 z-navbar backdrop-blur-xl border-b border-w-line px-2 min-[400px]:px-3 sm:px-6 h-[72px]">
-    <div class="navbar-start w-auto shrink-0">
-        <a href="{{ langPath $.Lang "/" }}" data-async-target="main" class="font-logo text-[1.6rem] font-light tracking-tight normal-case no-underline">
+{{/* NH-1: logo left, the main destinations centered, search /
+     notifications / profile right. The three zones are a flex row; the
+     center grows and centers itself between the other two, and from 2xl
+     (where everything fits with room to spare) the two sides split the
+     leftover evenly so the center is the true middle of the bar. */}}
+{{ $section := .NavSection }}
+<div class="navbar navbar-redesign fixed top-0 inset-x-0 z-navbar backdrop-blur-xl border-b border-w-line px-2 min-[400px]:px-3 sm:px-6 h-[72px] gap-2 xl:gap-4">
+    <div class="navbar-start w-auto shrink-0 2xl:flex-1 2xl:basis-0">
+        <a href="{{ langPath $.Lang "/" }}" data-async-target="main" class="font-logo text-[1.6rem] font-light tracking-tight normal-case no-underline whitespace-nowrap">
             Nikola's <span class="text-w-pink">Cinema</span>
         </a>
     </div>
-    <div class="navbar-end flex-1 w-auto gap-0.5 min-[400px]:gap-1 sm:gap-2">
-        {{/* Quick search — the home hero form, reachable from any page so the
-             next infohash doesn't require navigating back. Hidden where the
-             hero form is already on screen: the home/tool pages (*index.Data)
-             and the post-submit progress page (resource.PostData), both of
-             which render the index view with its own search box.
-
-             DaisyUI dropdown is focus-based CSS, and both forms are plain
-             POSTs to "/" — without JS the dropdown still opens and the submit
-             does a full-page render, same as the hero forms.
-             data-async-target="main" layers the usual AJAX flow on top. The
-             onsubmit blur closes the dropdown after an async submit
-             (full-page navigation closes it by itself).
-
-             Positioning: the wrapper is `static`, not DaisyUI's default
-             relative, so the panel's containing block is the navbar itself
-             (position:fixed). Anchored to the icon (`dropdown-end`) the
-             320px panel ran past the left viewport edge on phones — the icon
-             sits mid-navbar there. Against the navbar it spans inset-x-2 on
-             mobile and centers horizontally at sm+.
-
-             tabindex="0" on the upload label: labels aren't focusable, so
-             clicking one would drop :focus-within and close the panel before
-             the file picker opens. */}}
-        {{ $dataType := printf "%T" .Data }}
-        {{ if and (ne $dataType "*index.Data") (ne $dataType "resource.PostData") }}
-        <div class="dropdown static">
-            <label tabindex="0" class="btn btn-ghost btn-square w-14 h-14 min-h-14 border border-w-line text-w-sub hover:border-w-cyan hover:text-base-content cursor-pointer" aria-label="Search">
-                <svg class="size-5" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
-            </label>
-            <div tabindex="0" class="dropdown-content absolute top-full inset-x-2 sm:inset-x-auto sm:left-1/2 sm:-translate-x-1/2 sm:w-[400px] bg-base-200 border border-w-line rounded-box z-[1] p-3 shadow-lg mt-2">
-                <form action="{{ langPath $.Lang "/" }}" method="post" enctype="multipart/form-data" class="join w-full" data-async-target="main" onsubmit="document.activeElement && document.activeElement.blur()">
-                    <input type="text" name="resource" placeholder="{{ t $.Lang "home.placeholder" }}" class="input h-14 join-item flex-1 min-w-0 bg-base-300 border border-w-line focus:outline-none focus:border-w-cyan text-base placeholder:text-w-muted font-sans" required />
-                    {{/* relative: DaisyUI's .input is position:relative, so it paints its grey
-     border over the join's overlapped 1px edge — a non-positioned button's
-     left border is invisible no matter its color. Positioning the button
-     (later in DOM) puts its own cyan border on top, incl. the hover shade. */}}
-                    <button type="submit" class="btn h-14 min-h-14 px-5 text-base btn-soft-cyan join-item relative" data-umami-event="nav-search">{{ t $.Lang "home.search" }}</button>
-                </form>
-                <div class="divider text-w-muted text-[0.65rem] font-semibold tracking-widest uppercase my-2 before:bg-w-line after:bg-w-line">{{ t $.Lang "home.or" }}</div>
-                <form action="{{ langPath $.Lang "/" }}" method="post" enctype="multipart/form-data" class="nav-dropzone" data-async-target="main" onsubmit="document.activeElement && document.activeElement.blur()">
-                    <label for="nav-dropzone-input" tabindex="0" class="upload-dashed rounded-xl py-4 px-4 text-center cursor-pointer block">
-                        <p class="text-base text-w-sub"><span class="text-w-pinkL font-semibold">{{ t $.Lang "home.dropzone" }}</span> {{ t $.Lang "home.dropzoneHint" }}</p>
-                    </label>
-                    <input id="nav-dropzone-input" class="dropzone-input hidden" name="resource" type="file" />
-                </form>
-            </div>
-        </div>
-        {{ end }}
-        {{/* Below lg the bar keeps only the quick search and the burger;
-             everything else moves into the burger panel. Nikola's Cinema is
-             English-only and has no Donate button, so the language picker and
-             the pink Donate/tier button are gone (QW-2). */}}
-        {{ if .User | hasAuth }}
-        {{/* Discover and its Watchlist are the main destinations for a
-             signed-in user, so they lead the bar in their family colours
-             (cyan, pink) instead of blending with Library/Vault. The
-             Watchlist is a mode of the Discover page (?watchlist=1, restored
-             by DiscoverApp). Both keep their labels from lg up (DW-2);
-             Library, Vault and Jellyfin are icon-only until xl so the
-             56px car-sized buttons still fit at 1024px. */}}
-        <a class="hidden lg:inline-flex btn btn-ghost h-14 min-h-14 px-4 text-base gap-2 border border-w-cyan/40 text-w-cyan hover:border-w-cyan hover:text-base-content whitespace-nowrap" href="{{ langPath $.Lang "/discover" }}" data-async-target="main" data-umami-event="nav-discover" aria-label="Discover">
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-5">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M15.59 14.37a6 6 0 0 1-5.84 7.38v-4.8m5.84-2.58a14.98 14.98 0 0 0 6.16-12.12A14.98 14.98 0 0 0 9.631 8.41m5.96 5.96a14.926 14.926 0 0 1-5.841 2.58m-.119-8.54a6 6 0 0 0-7.381 5.84h4.8m2.581-5.84a14.927 14.927 0 0 0-2.58 5.84m2.699 2.7c-.103.021-.207.041-.311.06a15.09 15.09 0 0 1-2.448-2.448 14.9 14.9 0 0 1 .06-.312m-2.24 2.39a4.493 4.493 0 0 0-1.757 4.306 4.493 4.493 0 0 0 4.306-1.758M16.5 9a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0Z" />
-            </svg>
-            <span class="hidden lg:inline">{{ t $.Lang "nav.discover" }}</span>
+    {{/* NH-1: the main destinations, centered. Stacked icon-over-label
+         tiles from lg (1024px: logo + five tiles + the right-hand cluster
+         fit), icon beside label from xl. Below lg they live in the burger.
+         aria-current marks the page's section (web.Context.NavSection);
+         the Watchlist is Discover's ?watchlist=1 mode, which the server
+         cannot tell apart from Discover, so it is never marked. */}}
+    {{ if .User | hasAuth }}
+    <div class="navbar-center hidden lg:flex flex-1 2xl:flex-none justify-center gap-1 xl:gap-2 min-w-0">
+        <a class="nav-item relative btn btn-ghost h-14 min-h-14 min-w-[4.75rem] px-2 xl:px-4 flex-col xl:flex-row gap-0.5 xl:gap-2 text-xs xl:text-base font-medium border border-transparent hover:border-w-line hover:text-base-content whitespace-nowrap text-w-sub" href="{{ langPath $.Lang "/" }}" data-async-target="main" data-umami-event="nav-home"{{ if eq $section "home" }} aria-current="page"{{ end }}>
+            <svg class="size-6 xl:size-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="m2.25 12 8.954-8.955a1.126 1.126 0 0 1 1.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75M8.25 21h8.25"/></svg>
+            <span>Home</span>
         </a>
-        <a class="hidden lg:inline-flex btn btn-ghost h-14 min-h-14 px-4 text-base gap-2 border border-w-pinkL/40 text-w-pinkL hover:border-w-pinkL hover:text-base-content whitespace-nowrap" href="{{ langPath $.Lang "/discover" }}?watchlist=1" data-async-target="main" data-umami-event="nav-watchlist" aria-label="{{ t $.Lang "discover.watchlist.label" }}" title="{{ t $.Lang "discover.watchlist.label" }}">
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-5"><path stroke-linecap="round" stroke-linejoin="round" d="M21 8.25c0-2.485-2.099-4.5-4.688-4.5-1.935 0-3.597 1.126-4.312 2.733-.715-1.607-2.377-2.733-4.313-2.733C5.1 3.75 3 5.765 3 8.25c0 7.22 9 12 9 12s9-4.78 9-12Z"/></svg>
-            <span class="hidden lg:inline">{{ t $.Lang "discover.watchlist.label" }}</span>
+        <a class="nav-item relative btn btn-ghost h-14 min-h-14 min-w-[4.75rem] px-2 xl:px-4 flex-col xl:flex-row gap-0.5 xl:gap-2 text-xs xl:text-base font-medium border border-transparent hover:border-w-line hover:text-base-content whitespace-nowrap text-w-cyan" href="{{ langPath $.Lang "/discover" }}" data-async-target="main" data-umami-event="nav-discover"{{ if eq $section "discover" }} aria-current="page"{{ end }}>
+            <svg class="size-6 xl:size-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M15.59 14.37a6 6 0 0 1-5.84 7.38v-4.8m5.84-2.58a14.98 14.98 0 0 0 6.16-12.12A14.98 14.98 0 0 0 9.631 8.41m5.96 5.96a14.926 14.926 0 0 1-5.841 2.58m-.119-8.54a6 6 0 0 0-7.381 5.84h4.8m2.581-5.84a14.927 14.927 0 0 0-2.58 5.84m2.699 2.7c-.103.021-.207.041-.311.06a15.09 15.09 0 0 1-2.448-2.448 14.9 14.9 0 0 1 .06-.312m-2.24 2.39a4.493 4.493 0 0 0-1.757 4.306 4.493 4.493 0 0 0 4.306-1.758M16.5 9a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0Z"/></svg>
+            <span>{{ t $.Lang "nav.discover" }}</span>
+        </a>
+        <a class="nav-item relative btn btn-ghost h-14 min-h-14 min-w-[4.75rem] px-2 xl:px-4 flex-col xl:flex-row gap-0.5 xl:gap-2 text-xs xl:text-base font-medium border border-transparent hover:border-w-line hover:text-base-content whitespace-nowrap text-w-pinkL" href="{{ langPath $.Lang "/discover" }}?watchlist=1" data-async-target="main" data-umami-event="nav-watchlist">
+            <svg class="size-6 xl:size-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M21 8.25c0-2.485-2.099-4.5-4.688-4.5-1.935 0-3.597 1.126-4.312 2.733-.715-1.607-2.377-2.733-4.313-2.733C5.1 3.75 3 5.765 3 8.25c0 7.22 9 12 9 12s9-4.78 9-12Z"/></svg>
+            <span>{{ t $.Lang "discover.watchlist.label" }}</span>
+        </a>
+        <a class="nav-item relative btn btn-ghost h-14 min-h-14 min-w-[4.75rem] px-2 xl:px-4 flex-col xl:flex-row gap-0.5 xl:gap-2 text-xs xl:text-base font-medium border border-transparent hover:border-w-line hover:text-base-content whitespace-nowrap text-w-sub" href="{{ langPath $.Lang "/lib/" }}" data-async-target="main" data-umami-event="nav-library"{{ if eq $section "library" }} aria-current="page"{{ end }}>
+            <svg class="size-6 xl:size-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0Z"/></svg>
+            <span>{{ t $.Lang "nav.library" }}</span>
         </a>
         {{ if $.Jellyfin }}
-        <a class="hidden lg:inline-flex btn btn-ghost h-14 min-h-14 px-4 text-base gap-2 border border-w-pinkL/40 text-w-pinkL hover:border-w-pinkL hover:text-base-content whitespace-nowrap" href="/jellyfin" data-async-target="main" aria-label="Jellyfin" title="Jellyfin">
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-5"><path stroke-linecap="round" stroke-linejoin="round" d="M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/><path stroke-linecap="round" stroke-linejoin="round" d="M15.91 11.672a.375.375 0 0 1 0 .656l-5.603 3.113a.375.375 0 0 1-.557-.328V8.887c0-.286.307-.466.557-.327l5.603 3.112Z"/></svg>
-            <span class="hidden xl:inline">Jellyfin</span>
+        <a class="nav-item relative btn btn-ghost h-14 min-h-14 min-w-[4.75rem] px-2 xl:px-4 flex-col xl:flex-row gap-0.5 xl:gap-2 text-xs xl:text-base font-medium border border-transparent hover:border-w-line hover:text-base-content whitespace-nowrap text-w-pinkL" href="/jellyfin" data-async-target="main" data-umami-event="nav-jellyfin"{{ if eq $section "jellyfin" }} aria-current="page"{{ end }}>
+            <svg class="size-6 xl:size-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/><path stroke-linecap="round" stroke-linejoin="round" d="M15.91 11.672a.375.375 0 0 1 0 .656l-5.603 3.113a.375.375 0 0 1-.557-.328V8.887c0-.286.307-.466.557-.327l5.603 3.112Z"/></svg>
+            <span>Jellyfin</span>
         </a>
         {{ end }}
-        <a class="hidden lg:inline-flex btn btn-ghost h-14 min-h-14 px-4 text-base gap-2 border border-w-line text-w-sub hover:border-w-pink hover:text-base-content whitespace-nowrap" href="{{ langPath $.Lang "/lib/" }}" data-async-target="main" aria-label="Library">
-            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-5">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0 1 11.186 0Z" />
-            </svg>
-            <span class="hidden xl:inline">{{ t $.Lang "nav.library" }}</span>
-        </a>
-        {{ if $.Vault }}
-        <a class="hidden lg:inline-flex btn btn-ghost h-14 min-h-14 px-4 text-base gap-2 border border-w-line text-w-sub hover:border-w-pink hover:text-base-content whitespace-nowrap" href="{{ langPath $.Lang "/vault" }}" data-async-target="main" aria-label="Vault">
-            <svg xmlns="http://www.w3.org/2000/svg" class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M12 2L2 7l10 5 10-5-10-5z"/>
-                <path d="M2 17l10 5 10-5"/>
-                <path d="M2 12l10 5 10-5"/>
-            </svg>
-            <span class="hidden xl:inline">{{ t $.Lang "nav.vault" }}</span>
-        </a>
-        {{ end }}
+    </div>
+    {{ end }}
+    <div class="navbar-end flex-1 lg:flex-none 2xl:flex-1 2xl:basis-0 w-auto gap-0.5 min-[400px]:gap-1 sm:gap-2">
+        {{/* NH-3: the one search box. A title goes to Discover search, a
+             magnet / infohash / .torrent URL / URL to the resource flow
+             (handlers/resource.searchTitle: the hidden `search` field is
+             what tells this box from the magnet-only tool forms). The
+             .torrent upload lives here too, now that Home has no dropzone.
+
+             A <details> toggle, not a focus dropdown: it stays open while
+             you type or pick a file, and opens and closes without JS.
+             nav.js adds focus-on-open, Escape / outside-click closing,
+             recent searches. No `dropdown`/relative wrapper, so the panel's
+             containing block is the fixed navbar: it spans the bar's width
+             under it. */}}
+        <details class="nav-search" data-nav-search>
+            <summary class="list-none [&::-webkit-details-marker]:hidden btn btn-ghost h-14 min-h-14 min-w-14 px-3 xl:px-4 gap-2 text-base border border-w-line text-w-sub hover:border-w-cyan hover:text-base-content cursor-pointer" aria-label="Search" data-umami-event="nav-search-open">
+                <svg class="size-5" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+                <span class="hidden xl:inline">Search</span>
+            </summary>
+            <div class="nav-search-panel absolute top-full inset-x-0 bg-base-200 border-b border-w-line shadow-2xl px-3 sm:px-6 py-5">
+                <div class="max-w-[960px] mx-auto">
+                    <form action="{{ langPath $.Lang "/" }}" method="post" enctype="multipart/form-data" role="search" class="flex gap-2" data-async-target="main" data-nav-search-form>
+                        <input type="hidden" name="search" value="1" />
+                        <input type="search" name="resource" enterkeyhint="search" autocomplete="off" autocapitalize="off" spellcheck="false" required
+                               aria-label="Search movies and shows, or paste a magnet link"
+                               placeholder="Movie or show title, magnet link, infohash or .torrent URL"
+                               class="input h-14 flex-1 min-w-0 bg-base-300 border border-w-line focus:outline-none focus:border-w-cyan text-lg placeholder:text-w-muted font-sans" />
+                        <button type="submit" class="btn h-14 min-h-14 px-6 text-lg btn-soft-cyan" data-umami-event="nav-search">Search</button>
+                    </form>
+                    <div class="flex flex-wrap items-center gap-2 mt-3" data-nav-search-recent hidden>
+                        <span class="text-sm text-w-muted mr-1">Recent</span>
+                        <span class="contents" data-nav-search-recent-list></span>
+                        <button type="button" class="btn btn-ghost h-14 min-h-14 px-4 text-base text-w-muted" data-nav-search-recent-clear>Clear</button>
+                    </div>
+                    <div class="flex flex-wrap items-center gap-2 mt-3">
+                        <span class="text-sm text-w-muted mr-1">Browse</span>
+                        <a href="{{ langPath $.Lang "/discover" }}?type=movie" data-async-target="main" class="btn btn-ghost h-14 min-h-14 px-5 text-base border border-w-line text-w-sub hover:border-w-cyan hover:text-base-content">Movies</a>
+                        <a href="{{ langPath $.Lang "/discover" }}?type=series" data-async-target="main" class="btn btn-ghost h-14 min-h-14 px-5 text-base border border-w-line text-w-sub hover:border-w-cyan hover:text-base-content">Shows</a>
+                        <form action="{{ langPath $.Lang "/" }}" method="post" enctype="multipart/form-data" class="nav-dropzone ml-auto" data-async-target="main">
+                            <label for="nav-dropzone-input" tabindex="0" role="button" class="btn btn-ghost h-14 min-h-14 px-5 text-base gap-2 border border-dashed border-w-pinkL/50 text-w-pinkL hover:border-w-pinkL hover:text-base-content cursor-pointer" data-umami-event="nav-upload">
+                                <svg class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5"/></svg>
+                                Upload .torrent
+                            </label>
+                            <input id="nav-dropzone-input" class="dropzone-input hidden" name="resource" type="file" accept=".torrent,application/x-bittorrent" />
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </details>
+        {{ if .User | hasAuth }}
         <a class="hidden lg:inline-flex btn btn-ghost btn-square w-14 h-14 min-h-14 border border-w-line text-w-sub hover:border-w-pink hover:text-base-content whitespace-nowrap relative" href="{{ langPath $.Lang "/notifications" }}" data-async-target="main" aria-label="{{ t $.Lang "nav.notifications" }}">
             <svg xmlns="http://www.w3.org/2000/svg" class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M14.857 17.082a23.848 23.848 0 0 0 5.454-1.31A8.967 8.967 0 0 1 18 9.75V9A6 6 0 0 0 6 9v.75a8.967 8.967 0 0 1-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 0 1-5.714 0m5.714 0a3 3 0 1 1-5.714 0"/>
@@ -117,6 +111,19 @@
             <span class="notification-badge badge badge-xs bg-w-pink border-none text-white absolute -top-1 -right-1 px-1 min-w-[1.1rem] h-[1.1rem] leading-none">{{ $.UnreadNotifications }}</span>
             {{ end }}
         </a>
+        {{/* Vault is the one less-used destination: right-hand, icon-only
+             until 2xl (labelled tooltip), since Jellyfin keeps its own
+             centered section and 1024px has no room for a sixth tile. */}}
+        {{ if $.Vault }}
+        <a class="nav-item hidden lg:inline-flex btn btn-ghost h-14 min-h-14 px-4 text-base gap-2 border border-w-line text-w-sub hover:border-w-pink hover:text-base-content whitespace-nowrap" href="{{ langPath $.Lang "/vault" }}" data-async-target="main" aria-label="Vault" title="Vault"{{ if eq $section "vault" }} aria-current="page"{{ end }}>
+            <svg xmlns="http://www.w3.org/2000/svg" class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+                <path d="M2 17l10 5 10-5"/>
+                <path d="M2 12l10 5 10-5"/>
+            </svg>
+            <span class="hidden 2xl:inline">{{ t $.Lang "nav.vault" }}</span>
+        </a>
+        {{ end }}
         {{ end }}
         {{/* Activation progress, visible on every page so the checklist is not
              something you only remember while standing on the home page.
@@ -136,10 +143,10 @@
              where the user lands, and the counter never becomes a dead
              control. */}}
         {{ if .Onboarding }}
-        {{/* hidden below lg like every other nav label: .navbar-end is 50% wide
-             and buttons do not shrink, so on a phone this pushed the group over
-             the logo. The home-page card still covers small screens. */}}
-        <a class="hidden lg:inline-flex btn btn-ghost h-14 min-h-14 px-4 text-base border border-w-line text-w-sub hover:border-w-pink hover:text-base-content whitespace-nowrap gap-1.5"
+        {{/* xl and up only: from lg the centered destinations take the room
+             (NH-1), and buttons do not shrink. The home-page card covers
+             narrower screens. */}}
+        <a class="hidden xl:inline-flex btn btn-ghost h-14 min-h-14 px-4 text-base border border-w-line text-w-sub hover:border-w-pink hover:text-base-content whitespace-nowrap gap-1.5"
            href="{{ langPath $.Lang "/" }}#onboarding-checklist"
            data-async-target="#onboarding-modal"
            data-async-push-state="false"
@@ -152,11 +159,11 @@
         </a>
         {{ end }}
         {{/* Mobile burger (below lg): the overflow home for everything the
-             narrow bar dropped. Rows carry icon + label — icon-only nav for
+             narrow bar dropped, including the centered destinations. Rows carry icon + label — icon-only nav for
              occasional destinations (Vault, Discover) is mystery meat.
 
-             Same focus-based `dropdown static` full-width panel as the
-             quick-search. The onclick blur closes the panel after an async
+             Focus-based `dropdown static` full-width panel: the wrapper is
+             static, so the panel's containing block is the fixed navbar. The onclick blur closes the panel after an async
              link navigation (focus otherwise stays inside and holds it
              open). */}}
         <div class="dropdown static lg:hidden">
@@ -166,6 +173,9 @@
             <div tabindex="0" class="dropdown-content absolute top-full inset-x-2 bg-base-200 border border-w-line rounded-box z-[1] p-2 shadow-lg mt-2" onclick="if (event.target.closest('a')) { document.activeElement && document.activeElement.blur(); }">
                 <ul class="menu w-full p-0 gap-0.5">
                     {{ if .User | hasAuth }}
+                    <li><a href="{{ langPath $.Lang "/" }}" data-async-target="main" class="text-w-sub hover:text-base-content gap-3 min-h-14 text-base font-medium">
+                        <svg class="size-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="m2.25 12 8.954-8.955a1.126 1.126 0 0 1 1.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75M8.25 21h8.25"/></svg>
+                        Home</a></li>
                     <li><a href="{{ langPath $.Lang "/discover" }}" data-async-target="main" data-umami-event="nav-discover" class="text-w-cyan hover:text-base-content gap-3 min-h-14 text-base font-medium">
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="size-5"><path stroke-linecap="round" stroke-linejoin="round" d="M15.59 14.37a6 6 0 0 1-5.84 7.38v-4.8m5.84-2.58a14.98 14.98 0 0 0 6.16-12.12A14.98 14.98 0 0 0 9.631 8.41m5.96 5.96a14.926 14.926 0 0 1-5.841 2.58m-.119-8.54a6 6 0 0 0-7.381 5.84h4.8m2.581-5.84a14.927 14.927 0 0 0-2.58 5.84m2.699 2.7c-.103.021-.207.041-.311.06a15.09 15.09 0 0 1-2.448-2.448 14.9 14.9 0 0 1 .06-.312m-2.24 2.39a4.493 4.493 0 0 0-1.757 4.306 4.493 4.493 0 0 0 4.306-1.758M16.5 9a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0Z"/></svg>
                         {{ t $.Lang "nav.discover" }}</a></li>
@@ -203,11 +213,11 @@
         </div>
         <div class="flex">
             {{ if .User | hasAuth }}
-            <a class="hidden lg:inline-flex btn btn-ghost h-14 min-h-14 px-4 text-base gap-2 border border-w-line text-w-sub hover:border-w-pink hover:text-base-content" href="{{ langPath $.Lang "/profile" }}" data-async-target="main" aria-label="Profile">
+            <a class="nav-item hidden lg:inline-flex btn btn-ghost h-14 min-h-14 px-4 text-base gap-2 border border-w-line text-w-sub hover:border-w-pink hover:text-base-content" href="{{ langPath $.Lang "/profile" }}" data-async-target="main" aria-label="Profile and settings" title="Profile and settings"{{ if eq $section "profile" }} aria-current="page"{{ end }}>
                 <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                     <path d="M20 21C20 19.6044 20 18.9067 19.8278 18.3389C19.44 17.0605 18.4395 16.06 17.1611 15.6722C16.5933 15.5 15.8956 15.5 14.5 15.5H9.5C8.10444 15.5 7.40665 15.5 6.83886 15.6722C5.56045 16.06 4.56004 17.0605 4.17224 18.3389C4 18.9067 4 19.6044 4 21M16.5 7.5C16.5 9.98528 14.4853 12 12 12C9.51472 12 7.5 9.98528 7.5 7.5C7.5 5.01472 9.51472 3 12 3C14.4853 3 16.5 5.01472 16.5 7.5Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
                 </svg>
-                <span class="hidden xl:inline-block max-w-[180px] truncate align-middle">{{ .User | profileName }}</span>
+                <span class="hidden 2xl:inline-block max-w-[180px] truncate align-middle">{{ .User | profileName }}</span>
             </a>
             {{ else }}
             <a class="hidden lg:inline-flex btn btn-ghost h-14 min-h-14 px-4 text-base gap-2 border border-w-line text-w-sub hover:border-w-pink hover:text-base-content" href="{{ langPath $.Lang "/login" }}" data-async-target="main">{{ t $.Lang "nav.login" }}</a>

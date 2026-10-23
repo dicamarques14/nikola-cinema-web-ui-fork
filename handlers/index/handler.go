@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-pg/pg/v10"
+	uuid "github.com/satori/go.uuid"
 	cs "github.com/webtor-io/common-services"
 	"github.com/webtor-io/web-ui/handlers/common"
 	"github.com/webtor-io/web-ui/models"
@@ -21,8 +23,16 @@ type Data struct {
 	Instruction      string
 	Tool             *common.Tool
 	ContinueWatching []*models.WatchHistory
-	Onboarding       *models.OnboardingChecklist
+	// Watchlist is the signed-in Home's second rail (NH-2): movies and
+	// series the user saved in Discover, newest first, at most
+	// homeWatchlistLimit. Empty hides the rail.
+	Watchlist  []models.WatchlistItem
+	Onboarding *models.OnboardingChecklist
 }
+
+// homeWatchlistLimit caps the Home watchlist rail; the full list is one
+// tap away (Discover's watchlist mode, linked from the rail header).
+const homeWatchlistLimit = 20
 
 type Handler struct {
 	tb template.Builder[*web.Context]
@@ -94,6 +104,7 @@ func Render(c *gin.Context, tb template.Builder[*web.Context], pg *cs.PG, status
 						data.ContinueWatching = models.MergeContinueWatching(data.ContinueWatching, jf, 10)
 					}
 				}
+				data.Watchlist = loadWatchlist(c, db, user.ID)
 			}
 		}
 	}
@@ -120,6 +131,46 @@ func Render(c *gin.Context, tb template.Builder[*web.Context], pg *cs.PG, status
 	// which part.
 	c.Header("Server-Timing", fmt.Sprintf("%s, db;dur=%.1f, ctx;dur=%.1f", mw, ms(db), ms(time.Since(t))))
 	tb.Build("index").HTML(status, ctx)
+}
+
+// loadWatchlist is the Home watchlist rail: both lists merged newest first,
+// capped. A failed query hides the rail rather than failing the page.
+func loadWatchlist(c *gin.Context, db *pg.DB, userID uuid.UUID) []models.WatchlistItem {
+	movies, err := models.ListMovieWatchlistItems(c.Request.Context(), db, userID)
+	if err != nil {
+		return nil
+	}
+	series, err := models.ListSeriesWatchlistItems(c.Request.Context(), db, userID)
+	if err != nil {
+		return nil
+	}
+	return capItems(mergeWatchlist(movies, series), homeWatchlistLimit)
+}
+
+// mergeWatchlist merges two newest-first lists into one, newest first (the
+// same order Discover's watchlist mode shows; see
+// handlers/discover_watchlist.mergeByCreatedAtDesc).
+func mergeWatchlist(a, b []models.WatchlistItem) []models.WatchlistItem {
+	out := make([]models.WatchlistItem, 0, len(a)+len(b))
+	i, j := 0, 0
+	for i < len(a) && j < len(b) {
+		if a[i].CreatedAt >= b[j].CreatedAt {
+			out = append(out, a[i])
+			i++
+		} else {
+			out = append(out, b[j])
+			j++
+		}
+	}
+	out = append(out, a[i:]...)
+	return append(out, b[j:]...)
+}
+
+func capItems(items []models.WatchlistItem, n int) []models.WatchlistItem {
+	if len(items) > n {
+		return items[:n]
+	}
+	return items
 }
 
 func ms(d time.Duration) float64 { return float64(d.Microseconds()) / 1000 }

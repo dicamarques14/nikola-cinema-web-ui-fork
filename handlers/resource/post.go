@@ -5,6 +5,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -94,6 +95,38 @@ func (s *Handler) bindArgs(c *gin.Context) (*PostArgs, error) {
 	}, nil
 }
 
+// searchField marks a submit from the navbar's one search box (NH-3,
+// partials/nav.html). Only that box routes titles: the box takes a title, a
+// magnet, an infohash or a URL in one field, and a title there means "find
+// this in Discover", not the "that is not a magnet" error the tool pages'
+// magnet-only forms still answer free text with.
+const searchField = "search"
+
+// searchTitle reports the query a search-box submit should send to Discover
+// search: free text (sv.ErrQueryFreeText) from the box, with no file and no
+// tool instruction. Magnets, infohashes and URLs (a .torrent link, a web
+// page) fall through to the resource flow and its existing messages.
+func searchTitle(c *gin.Context) (string, bool) {
+	if v, _ := c.GetPostForm(searchField); v == "" {
+		return "", false
+	}
+	if inst, _ := c.GetPostForm("instruction"); inst != "" {
+		return "", false
+	}
+	if f, _ := c.FormFile("resource"); f != nil {
+		return "", false
+	}
+	q, _ := c.GetPostForm("resource")
+	q = strings.TrimSpace(q)
+	if q == "" {
+		return "", false
+	}
+	if _, _, err := sv.ResolveQueryHash(q); !errors.Is(err, sv.ErrQueryFreeText) {
+		return "", false
+	}
+	return q, true
+}
+
 type PostData struct {
 	Job              *job.Job
 	Args             *PostArgs
@@ -106,6 +139,11 @@ func (s *Handler) post(c *gin.Context) {
 	// Ensure RedirectWithError has a valid return URL (missing for magnet GET routes)
 	if c.GetHeader("X-Return-Url") == "" {
 		c.Request.Header.Set("X-Return-Url", "/")
+	}
+
+	if q, ok := searchTitle(c); ok {
+		c.Redirect(http.StatusSeeOther, web.LangURL(i18n.GetLang(c), "/discover?search="+url.QueryEscape(q)))
+		return
 	}
 
 	args, err := s.bindArgs(c)

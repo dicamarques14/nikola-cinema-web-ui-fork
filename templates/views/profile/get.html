@@ -60,15 +60,10 @@
         {{ template "profile/webdav" $ }}
     </div>
     {{ end }}
-    {{ if not .Data.DisableS3 }}
-    <div id="s3" data-async-layout="{{`{{ template "profile/s3" $ }}`}}">
-        {{ template "profile/s3" $ }}
-    </div>
-    {{ end }}
+    {{/* ST-8: S3 export and API keys are hidden from Settings (UI only).
+         The profile/s3 and profile/api partials, their routes and the
+         backends are untouched; re-add the two blocks to bring them back. */}}
     {{ if not .Data.DisableAPI }}
-    <div id="api" data-async-layout="{{`{{ template "profile/api" $ }}`}}">
-        {{ template "profile/api" $ }}
-    </div>
     <div id="devices" data-async-layout="{{`{{ template "profile/devices" $ }}`}}">
         {{ template "profile/devices" $ }}
     </div>

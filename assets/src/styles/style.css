@@ -2286,6 +2286,36 @@ input:-webkit-autofill:focus {
   background-color: rgba(255,255,255,0.05) !important;
 }
 
+/* NH-1: the current destination in the top nav (aria-current is set
+   server-side from web.Context.NavSection). A lit tile plus an underline in
+   the item's own color, readable at arm's length in the car. */
+.navbar-redesign .nav-item[aria-current="page"] {
+  color: #f1f5f9 !important;
+  background-color: rgba(255,255,255,0.06);
+  border-color: rgba(255,255,255,0.12);
+}
+.navbar-redesign .nav-item.relative[aria-current="page"]::after {
+  content: "";
+  position: absolute;
+  left: 22%;
+  right: 22%;
+  bottom: 3px;
+  height: 3px;
+  border-radius: 2px;
+  background: #fd79a8;
+}
+/* NH-3: <summary> as a button, without the disclosure triangle */
+.nav-search > summary::-webkit-details-marker {
+  display: none;
+}
+.nav-search > summary {
+  list-style: none;
+}
+.nav-search[open] > summary {
+  color: #f1f5f9;
+  border-color: #00cec9;
+}
+
 /* Ghost button hover: override DaisyUI btn-ghost hover color */
 .btn-ghost.text-w-sub:hover,
 .btn-ghost.text-w-muted:hover {

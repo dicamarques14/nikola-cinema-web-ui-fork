@@ -24,9 +24,11 @@
 {{ define "head_extra" }}{{/* No JSON-LD: Nikola's Cinema is a private instance (QW-3). */}}{{ end }}
 {{ define "main" }}
 {{ with .Data }}
-{{/* $home: the signed-in Home (QW-1). No hero, marketing, demo, onboarding
-     or about block; Continue Watching leads and the magnet/upload box
-     follows, compact. Anonymous visitors and tool pages keep the landing. */}}
+{{/* $home: the signed-in Home (QW-1, NH-2). No hero, marketing, demo,
+     onboarding or about block, and no magnet/upload box: pasting and
+     uploading live in the nav search (NH-3). Home is rails of posters
+     (partials/home_rails.html). Anonymous visitors and tool pages keep the
+     landing and its forms. */}}
 {{ $home := and (not .Tool) $.User ($.User | hasAuth) }}
 <!-- Hero Section -->
 <section class="flex flex-col items-center text-center relative overflow-hidden {{ if $home }}pt-[104px]{{ else }}pt-[120px]{{ end }} pb-16 px-3 sm:px-6">
@@ -89,10 +91,10 @@
     </div>
     {{ end }}
 
-    {{ if $home }}{{ template "continue_watching" (withContext $ .ContinueWatching) }}{{ end }}
+    {{ if $home }}{{ template "home_rails" (withContext $ .) }}{{ else }}
 
     <!-- input area -->
-    <div class="relative z-10 w-full max-w-[680px]{{ if $home }} mt-10{{ end }}">
+    <div class="relative z-10 w-full max-w-[680px]">
         <!-- search -->
         <form action="{{ langPath $.Lang "/" }}" method="post" enctype="multipart/form-data" class="join w-full" data-async-target="main">
             <div class="join-item flex items-center bg-base-300 border border-w-line rounded-l-[14px] flex-1 h-12 focus-within:border-w-pink focus-within:shadow-[0_0_40px_rgba(232,67,147,0.12)] transition-all">
@@ -118,19 +120,18 @@
         </form>
 
         <!-- divider -->
-        <div class="divider text-w-muted text-xs font-semibold tracking-widest uppercase {{ if $home }}my-3{{ else }}my-5{{ end }} before:bg-w-line after:bg-w-line">{{ t $.Lang "home.or" }}</div>
+        <div class="divider text-w-muted text-xs font-semibold tracking-widest uppercase my-5 before:bg-w-line after:bg-w-line">{{ t $.Lang "home.or" }}</div>
 
         <!-- upload zone -->
         <form action="{{ langPath $.Lang "/" }}" method="post" enctype="multipart/form-data" class="dropzone" data-async-target="main">
-            <label for="dropzone-input" class="upload-dashed rounded-2xl {{ if $home }}py-4{{ else }}py-6{{ end }} px-6 text-center cursor-pointer block">
+            <label for="dropzone-input" class="upload-dashed rounded-2xl py-6 px-6 text-center cursor-pointer block">
                 <p class="text-[0.95rem] text-w-sub"><span class="text-w-pinkL font-semibold">{{ t $.Lang "home.dropzone" }}</span> {{ t $.Lang "home.dropzoneHint" }}</p>
-                {{ if not $home }}<span class="badge badge-sm bg-white/5 border-0 text-w-muted mt-3">{{ t $.Lang "home.noSizeLimit" }}</span>{{ end }}
+                <span class="badge badge-sm bg-white/5 border-0 text-w-muted mt-3">{{ t $.Lang "home.noSizeLimit" }}</span>
             </label>
             <input class="dropzone-input hidden" name="resource" type="file" />
             <input name="instruction" value="{{ .Instruction }}" type="hidden" />
         </form>
 
-        {{ if not $home }}
         <!-- demo & speedtest links -->
         <div class="flex justify-center items-center gap-4 mt-4">
             <form action="{{ langPath $.Lang "/" }}" method="post" enctype="multipart/form-data" data-async-target="main">
@@ -146,8 +147,8 @@
                 {{ t $.Lang "home.speedTest" }}
             </a>
         </div>
-        {{ end }}
     </div>
+    {{ end }}
 
     {{/* `has` is required, not defensive: this view is also rendered by
          handlers/resource.post with PostData, which has no Onboarding field,
