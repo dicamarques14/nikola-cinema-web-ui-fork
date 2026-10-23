@@ -1,9 +1,12 @@
-FROM alpine:3.21 AS certs
+# certs are arch-independent: fetch them natively
+FROM --platform=$BUILDPLATFORM alpine:3.21 AS certs
 
 # getting certs
 RUN apk update && apk upgrade && apk add --no-cache ca-certificates
 
-FROM node:22 AS build_assets
+# webpack output (assets/dist) is plain JS/CSS, identical for every arch,
+# so build it once on the host arch instead of under QEMU
+FROM --platform=$BUILDPLATFORM node:22 AS build_assets
 
 WORKDIR /app
 
@@ -13,7 +16,10 @@ RUN npm install
 
 RUN npm run build
 
-FROM golang:1.26-alpine AS build
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS build
+
+ARG TARGETOS
+ARG TARGETARCH
 
 # set work dir
 WORKDIR /app
@@ -24,8 +30,9 @@ COPY . .
 # disable crosscompiling
 ENV CGO_ENABLED=0
 
-# compile linux only
-ENV GOOS=linux
+# cross-compile natively for the target platform (CGO is off, so no C toolchain needed)
+ENV GOOS=${TARGETOS:-linux}
+ENV GOARCH=${TARGETARCH}
 
 # build the binary with debug information removed
 RUN go build -ldflags '-w -s -X google.golang.org/protobuf/reflect/protoregistry.conflictPolicy=ignore' -a -installsuffix cgo -o server
